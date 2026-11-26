@@ -91,6 +91,9 @@ export class EquityView {
           h('label', gloss('Board', '牌面'), this.inputs.board),
           h('button.btn.primary', { onclick: () => this.run() }, 'Count'),
           this.errorEl,
+        ),
+        h(
+          'div.eq-help',
           h('div', h('div.sub', gloss('Try', '例子')), examples),
           h(
             'p.dim',

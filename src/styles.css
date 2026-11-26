@@ -197,6 +197,10 @@ canvas {
   white-space: nowrap;
 }
 
+.slot {
+  min-height: calc(100svh - var(--bar));
+}
+
 /* --- Common pieces ------------------------------------------------------- */
 
 .btn {
@@ -582,7 +586,7 @@ h2 .zh {
 
 .chart canvas {
   cursor: ew-resize;
-  touch-action: none;
+  touch-action: pan-y;
 }
 
 .chart-note {
@@ -1028,7 +1032,7 @@ h2 .zh {
 
 .ruler canvas {
   cursor: ew-resize;
-  touch-action: none;
+  touch-action: pan-y;
 }
 
 .pf-body {
@@ -1105,13 +1109,33 @@ h2 .zh {
   padding: 28px var(--pad) 56px;
   display: grid;
   grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
-  gap: 56px;
+  grid-template-areas: 'in out' 'help out';
+  grid-template-rows: max-content 1fr;
+  gap: 28px 56px;
   align-items: start;
 }
 
-.eq-in {
+.eq-in,
+.eq-help {
   display: grid;
   gap: 20px;
+}
+
+.eq-in {
+  grid-area: in;
+}
+
+.eq-help {
+  grid-area: help;
+}
+
+.eq-out {
+  grid-area: out;
+}
+
+.eq-help p .zh {
+  display: block;
+  margin: 4px 0 0;
 }
 
 .eq-in label {
@@ -1342,6 +1366,11 @@ h2 .zh {
   .check {
     grid-template-columns: minmax(0, 1fr);
     gap: 28px;
+  }
+
+  .eq {
+    grid-template-areas: 'in' 'out' 'help';
+    grid-template-rows: none;
   }
 
   .check {

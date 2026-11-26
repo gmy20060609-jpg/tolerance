@@ -1,6 +1,7 @@
 // Tolerance: the page shell. Four tools, one per route.
 
 import { gloss, h } from './ui/dom.ts';
+import { RiverView } from './views/river.ts';
 
 interface View {
   el: HTMLElement;
@@ -9,14 +10,15 @@ interface View {
 }
 
 const routes: { hash: string; en: string; zh: string; load: () => Promise<View> }[] = [
-  { hash: '#river', en: 'River', zh: '河牌', load: async () => new (await import('./views/river.ts')).RiverView() },
+  // The river view is the first screen, so it ships with the page itself.
+  { hash: '#river', en: 'River', zh: '河牌', load: async () => new RiverView() },
   { hash: '#push-or-fold', en: 'Push or fold', zh: '全下或弃牌', load: async () => new (await import('./views/pushfold.ts')).PushFoldView() },
   { hash: '#equity', en: 'Equity', zh: '胜率', load: async () => new (await import('./views/equity.ts')).EquityView() },
   { hash: '#proof', en: 'Proof', zh: '验证', load: async () => new (await import('./views/proof.ts')).ProofView() },
 ];
 
 const app = document.getElementById('app')!;
-const slot = h('div');
+const slot = h('div.slot');
 const links = routes.map((route) => h('a', { href: route.hash }, gloss(route.en, route.zh)));
 
 app.append(
@@ -64,3 +66,11 @@ async function show(): Promise<void> {
 
 window.addEventListener('hashchange', show);
 show();
+
+// Fetch the other three views once the first one is up, so switching is instant.
+const idle = (window as { requestIdleCallback?: (run: () => void) => void }).requestIdleCallback ?? ((run: () => void) => setTimeout(run, 1500));
+idle(() => {
+  void import('./views/pushfold.ts');
+  void import('./views/equity.ts');
+  void import('./views/proof.ts');
+});
