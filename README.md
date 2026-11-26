@@ -2,6 +2,8 @@
 
 A heads-up poker solver that runs in the browser and states its error.
 
+**[tolerance-e09.pages.dev](https://tolerance-e09.pages.dev/)**
+
 ![The river solver on a hand from the 2003 World Series of Poker](docs/tolerance.png)
 
 Every answer comes with its exploitability: what a perfect opponent could still win from the strategy shown. You set the tolerance; the solver runs until it is inside it.
