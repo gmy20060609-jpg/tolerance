@@ -7,6 +7,7 @@
 // for the largest.
 
 import { CLASS_NAMES } from '../engine/cards.ts';
+import { capture } from './dom.ts';
 import { FONT, GREY, INK, INK_3, INK_4, LINE, PAPER, RED, pixelRatio } from './theme.ts';
 
 export type SegStyle = 'none' | 'grey' | 'solid' | 'hatch0' | 'hatch1' | 'hatch2' | 'ink';
@@ -162,7 +163,7 @@ export class Grid {
       moved = false;
       last = cell;
       if (this.onpaint) {
-        c.setPointerCapture(event.pointerId);
+        capture(c, event);
         this.onpaint(cell, true);
       }
     });

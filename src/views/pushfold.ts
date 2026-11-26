@@ -3,7 +3,7 @@
 
 import { CLASS_NAMES } from '../engine/cards.ts';
 import type { PushFoldSolution } from '../engine/pushfold.ts';
-import { frameLoop, gloss, h, replace } from '../ui/dom.ts';
+import { capture, frameLoop, gloss, h, replace } from '../ui/dom.ts';
 import { frequency } from '../ui/format.ts';
 import { Grid, type GridData } from '../ui/grid.ts';
 import { FONT, GREY, INK, INK_3, INK_4, PAPER, RED, pixelRatio } from '../ui/theme.ts';
@@ -160,7 +160,7 @@ export class PushFoldView {
     let down = false;
     this.ruler.addEventListener('pointerdown', (event) => {
       down = true;
-      this.ruler.setPointerCapture(event.pointerId);
+      capture(this.ruler, event);
       this.setStack(at(event));
     });
     this.ruler.addEventListener('pointermove', (event) => down && this.setStack(at(event)));
@@ -221,7 +221,8 @@ export class PushFoldView {
           seg[c] = limit / MAX;
           fill[c] = limit > 0 ? 1 : 0;
           tone[c] = limit > 0 ? 2 : 0;
-          text.push(limit >= MAX && this.sweepDone ? '25+' : limit > 0 ? limit.toFixed(1) : null);
+          // The figures are only final once every depth has been solved.
+          text.push(!this.sweepDone ? null : limit >= MAX ? '25+' : limit > 0 ? limit.toFixed(1) : null);
         }
       }
       const data: GridData = { k: 1, seg, fill, styles: [side === 'push' ? 'solid' : 'grey'], tone, text };

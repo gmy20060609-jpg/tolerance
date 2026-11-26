@@ -2,6 +2,7 @@
 // as a line to cross. Dragging across the chart steps back through the solve.
 
 import { FONT, INK, INK_3, INK_4, PAPER, RED, pixelRatio } from './theme.ts';
+import { capture } from './dom.ts';
 import { percent } from './format.ts';
 
 export interface ChartPoint {
@@ -52,7 +53,7 @@ export class ConvergenceChart {
     this.canvas.addEventListener('pointerdown', (event) => {
       if (!this.points.length) return;
       this.scrubbing = true;
-      this.canvas.setPointerCapture(event.pointerId);
+      capture(this.canvas, event);
       this.onscrub?.(at(event));
     });
     this.canvas.addEventListener('pointermove', (event) => {

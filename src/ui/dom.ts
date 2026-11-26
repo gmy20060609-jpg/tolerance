@@ -63,3 +63,12 @@ export function frameLoop(draw: (time: number) => boolean | void): { kick(): voi
 }
 
 export const reducedMotion = (): boolean => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Keeps a drag attached to the element it started on, where the browser allows it. */
+export function capture(el: Element, event: PointerEvent): void {
+  try {
+    el.setPointerCapture(event.pointerId);
+  } catch {
+    // A synthetic or already released pointer cannot be captured; the drag still works inside the element.
+  }
+}
