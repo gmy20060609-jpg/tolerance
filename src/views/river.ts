@@ -675,6 +675,13 @@ export class RiverView {
           h('span.answer', answer),
         );
       }),
+      h(
+        'p.dim',
+        'Nobody knows the ranges the two were playing. These answers hold for the ranges assumed ',
+        h('a', { href: '#spot' }, 'below'),
+        '; change them and it solves again.',
+        h('span.zh', { lang: 'zh-Hans' }, '两人当时的范围无人知道。以上结果只在下方假设的范围下成立，改了就重解。'),
+      ),
     );
   }
 

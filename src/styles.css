@@ -476,16 +476,6 @@ h2 .zh {
   container-type: inline-size;
 }
 
-@container (max-width: 640px) {
-  .result {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .result .caption {
-    max-width: none;
-  }
-}
 
 .spot-head {
   display: flex;
@@ -580,6 +570,17 @@ h2 .zh {
   margin: 0;
 }
 
+@container (max-width: 640px) {
+  .result {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .result .caption {
+    max-width: none;
+  }
+}
+
 .chart {
   height: clamp(132px, 19svh, 220px);
 }
@@ -618,6 +619,16 @@ h2 .zh {
 .played button:hover .who {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+.played p {
+  padding: 8px 0 0;
+  max-width: 78ch;
+}
+
+.played p .zh {
+  display: block;
+  margin: 0;
 }
 
 .played .answer {
@@ -1213,17 +1224,17 @@ h2 .zh {
   background: var(--red);
 }
 
-.field {
+.boards {
   width: 100%;
   min-height: 1px;
 }
 
-.field canvas {
+.boards canvas {
   image-rendering: pixelated;
   touch-action: auto;
 }
 
-.field + p .zh {
+.boards + p .zh {
   display: block;
   margin: 2px 0 0;
 }

@@ -40,7 +40,7 @@ export class EquityView {
   private readonly grids = [new Grid('Equity of each hand in the first range'), new Grid('Equity of each hand in the second range')];
   private ranges: [Float64Array, Float64Array] | null = null;
   private readonly field = document.createElement('canvas');
-  private readonly fieldBox = h('div.field');
+  private readonly fieldBox = h('div.boards');
   private readonly fieldNote = h('p.dim');
   private last: EquityResult | null = null;
 
