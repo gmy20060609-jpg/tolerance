@@ -4,7 +4,7 @@ A heads-up poker solver that runs in the browser and states its error.
 
 **[tolerance-e09.pages.dev](https://tolerance-e09.pages.dev/)**
 
-![The river solver on a hand from the 2003 World Series of Poker](docs/tolerance.png)
+![The front page: a hand from the 2003 World Series of Poker, solved in the tab](docs/tolerance.png)
 
 Every answer comes with its exploitability: what a perfect opponent could still win from the strategy shown. You set the tolerance; the solver runs until it is inside it.
 
@@ -60,8 +60,19 @@ npm run build    # a static site in dist/
 
 The engine is plain TypeScript with no dependencies: `src/engine`. The site adds none either.
 
-## The first screen
+## The front page
 
-The site opens on the best-known hand of the 2003 World Series of Poker Main Event, played heads-up for the title: Chris Moneymaker moves all-in on the river with king high and Sam Farha folds top pair. The cards, bets and stacks are as reported by [PokerNews](https://www.pokernews.com/strategy/analyzing-moneymaker-bluff-of-the-century-against-farha-35218.htm). The two ranges are an assumption, written out in `src/spots.ts`; change them on the page and it solves again.
+The site opens on the best-known hand of the 2003 World Series of Poker Main Event, played heads-up for the title: Chris Moneymaker moves all-in on the river with king high and Sam Farha folds top pair. The page solves that river in the tab, once at each of six tolerances, and draws its photographs as a line screen whose pitch follows the tolerance picked: a loose answer is a coarse picture. The cards, bets and stacks are as reported by [PokerNews](https://www.pokernews.com/strategy/analyzing-moneymaker-bluff-of-the-century-against-farha-35218.htm). The two ranges are an assumption, written out in `src/spots.ts`; change them in the solver and it solves again.
+
+## Photographs
+
+In `public/img`. The people pictured have no connection with this project, and the photographs are from other years than 2003.
+
+| File | Source | Licence | Changes |
+| --- | --- | --- | --- |
+| `farha-2010.jpg` | [Sam Farha at the 2010 World Series of Poker](https://commons.wikimedia.org/wiki/File:Sam_Farha_playing_toward_a_championship.jpg), flipchip / LasVegasVegas.com | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) | Black and white, resized. This version is under the same licence. |
+| `moneymaker-2008.jpg` | [Chris Moneymaker at the EPT Grand Final, Monte Carlo, 2008](https://commons.wikimedia.org/wiki/File:Chris_Moneymaker_EPT4.jpg), Equipo Unibet | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | Cropped, black and white. |
+| `binions-1986.jpg` | [Binion's Horseshoe, 1986](https://commons.wikimedia.org/wiki/File:Binions_horseshoe_1986.jpg), Larry D. Moore | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Resized. |
+| `hine-1909.jpg` | [Messengers at poker, Hartford, 5 March 1909](https://commons.wikimedia.org/wiki/File:8_P.M._Flashlight_photo_of_messengers_absorbed_in_their_usual_game_of_poker_in_the_%22Den_of_the_terrible_nine.%22..._-_NARA_-_523167.jpg), Lewis Hine, U.S. National Archives | Public domain | Cropped, resized. |
 
 Made by [Karnak](https://karnak.design).

@@ -20,7 +20,8 @@ import { card, cards } from '../ui/cards.ts';
 import { ConvergenceChart } from '../ui/chart.ts';
 import { frameLoop, gloss, h, keepFocus, reducedMotion, replace } from '../ui/dom.ts';
 import { amount, frequency, integer, percent, seconds, share } from '../ui/format.ts';
-import { Grid, swatch, type GridData, type SegStyle } from '../ui/grid.ts';
+import { Grid, swatch, type GridData } from '../ui/grid.ts';
+import { CSS_FILL, drawing } from '../ui/look.ts';
 import type { Frame, Request, Response } from '../worker/protocol.ts';
 
 const TOLERANCES = [0.01, 0.005, 0.003, 0.001, 0.0005, 0.0001];
@@ -49,40 +50,6 @@ const cloneSpot = (preset: Preset): Spot => ({
     raises: [[...preset.spot.tree.raises[0]], [...preset.spot.tree.raises[1]]],
   },
 });
-
-/** How the actions of a node are drawn: order across the bar and fill of each. */
-function drawing(node: TreeNode): { order: number[]; styles: SegStyle[]; byAction: SegStyle[] } {
-  const aggressive: number[] = [];
-  const passive: number[] = [];
-  const folds: number[] = [];
-  node.actions.forEach((action, i) => {
-    if (action.kind === 'fold') folds.push(i);
-    else if (action.kind === 'check' || action.kind === 'call') passive.push(i);
-    else aggressive.push(i);
-  });
-  aggressive.sort((a, b) => node.actions[b]!.to - node.actions[a]!.to);
-  const scale: SegStyle[][] = [[], ['solid'], ['solid', 'hatch1'], ['solid', 'hatch1', 'hatch0'], ['solid', 'hatch2', 'hatch1', 'hatch0']];
-  const reds = scale[Math.min(4, aggressive.length)]!;
-  const order = [...aggressive, ...passive, ...folds];
-  const styles: SegStyle[] = [
-    ...aggressive.map((_, i) => reds[Math.min(i, reds.length - 1)]!),
-    ...passive.map(() => 'grey' as SegStyle),
-    ...folds.map(() => 'none' as SegStyle),
-  ];
-  const byAction: SegStyle[] = [];
-  order.forEach((action, i) => (byAction[action] = styles[i]!));
-  return { order, styles, byAction };
-}
-
-const CSS_FILL: Record<SegStyle, string> = {
-  none: 'transparent',
-  grey: 'var(--grey)',
-  solid: 'var(--red)',
-  ink: 'var(--ink)',
-  hatch0: 'repeating-linear-gradient(135deg, var(--red) 0 1px, transparent 1px 5px)',
-  hatch1: 'repeating-linear-gradient(135deg, var(--red) 0 1px, transparent 1px 2.5px)',
-  hatch2: 'repeating-linear-gradient(135deg, var(--red) 0 1px, transparent 1px 3px), repeating-linear-gradient(45deg, var(--red) 0 1px, transparent 1px 3px)',
-};
 
 export class RiverView {
   readonly el: HTMLElement;
@@ -120,6 +87,10 @@ export class RiverView {
 
   // Elements that change.
   private readonly pathEl = h('nav.path', { 'aria-label': 'Line of play' });
+  private readonly examplesEl = h('div.examples', { role: 'group', 'aria-label': 'Spots to open' });
+  private readonly decideEl = h('div.decide-head');
+  private readonly spotNameEl = h('span.spot-name');
+  private readonly errEl = h('a.err', { href: '#error', title: 'How far the strategy shown is from unexploitable' });
   private readonly readoutEl = h('div.readout', { 'aria-live': 'off' });
   private readonly legendEl = h('div.legend');
   private readonly dealEl = h('div.deal');
@@ -134,7 +105,7 @@ export class RiverView {
   private readonly blockEl = h('dl.block');
   private readonly statusEl = h('span.status', { role: 'status' });
   private readonly detailEl = h('div');
-  private readonly detailHead = h('h2');
+  private readonly detailHead = h('h3');
   private readonly srTable = h('div.sr', { 'aria-live': 'polite' });
   private readonly editorEl = h('div.editor');
   private readonly rangeGrids: Grid[] = [];
@@ -154,7 +125,18 @@ export class RiverView {
       if (preset) this.load(preset);
     });
 
-    this.grid.onhover = () => this.updateReadout();
+    this.presetEl.hidden = true;
+    for (const preset of PRESETS) {
+      this.examplesEl.append(h('button', { 'data-id': preset.id, 'aria-pressed': 'false', onclick: () => this.load(preset) }, preset.title));
+    }
+    this.examplesEl.append(
+      h('button', { 'data-id': 'custom', 'aria-pressed': 'false', hidden: true, onclick: () => document.getElementById('spot')?.scrollIntoView() }, 'Your own spot'),
+    );
+
+    this.grid.onhover = () => {
+      this.updateReadout();
+      this.renderDetail();
+    };
     this.grid.onpick = (cell) => {
       this.selected = this.selected === cell ? -1 : cell;
       this.grid.selected = this.selected;
@@ -170,26 +152,18 @@ export class RiverView {
       this.loop.kick();
     };
 
-    const stage = h(
-      'div.stage',
-      this.pathEl,
-      this.grid.el,
-      this.readoutEl,
-      this.legendEl,
-      this.dealEl,
-      this.srTable,
-    );
+    // Who acts and what they can do. It sits beside the grid, or above it where there is one column.
+    const decide = h('div.decide', this.decideEl, this.legendEl, this.dealEl);
+    const stage = h('div.stage', this.pathEl, this.grid.el, this.readoutEl, this.srTable);
 
     const side = h(
       'div.side',
-      h(
-        'div.spot',
-        h('div.spot-head', this.presetEl, this.titleEl),
-        this.boardEl,
-        this.storyEl,
-      ),
+      h('div.spot', h('div.spot-head', this.spotNameEl, this.titleEl, this.presetEl), this.boardEl, this.storyEl),
+      this.playedEl,
+      h('section.inspect', { id: 'hand' }, this.detailHead, this.detailEl),
       h(
         'div.result',
+        { id: 'error' },
         this.labelEl,
         this.figureEl,
         h(
@@ -198,13 +172,7 @@ export class RiverView {
           h('span.zh', { lang: 'zh-Hans' }, '可剥削度：完美的对手最多还能多赢走的底池比例'),
         ),
       ),
-      h(
-        'div.chart-wrap',
-        { style: { display: 'grid', gap: '20px' } },
-        this.chart.el,
-        h('p.chart-note', this.noteEl),
-      ),
-      this.playedEl,
+      h('div.chart-wrap', this.chart.el, h('p.chart-note', this.noteEl)),
       this.blockEl,
       h(
         'div.controls',
@@ -213,26 +181,17 @@ export class RiverView {
         this.statusEl,
       ),
     );
+    const narrow = matchMedia('(max-width: 1080px)');
+    const place = () => (narrow.matches ? stage.insertBefore(decide, this.grid.el) : side.insertBefore(decide, side.children[1] ?? null));
+    narrow.addEventListener('change', place);
+    place();
 
     this.el = h(
       'main',
       { id: 'main' },
-      h('h1.sr', 'Tolerance: a heads-up river solver'),
+      h('h1.sr', 'Tolerance: a heads-up river and turn solver'),
+      h('div.examples-bar', this.examplesEl, this.errEl, h('a.btn', { href: '#spot' }, 'Edit the spot', h('span.zh', { lang: 'zh-Hans' }, '改局面'))),
       h('div.river', stage, side),
-      h(
-        'section.section',
-        { id: 'hand' },
-        h(
-          'header',
-          this.detailHead,
-          h(
-            'p',
-            'Every combination of the selected hand that reaches this decision: how often it takes each action, and what each action is worth to it as a share of the pot. Pick a hand in the grid above.',
-            h('span.zh', { lang: 'zh-Hans' }, '所选手牌的每个具体组合：各动作的频率，以及每个动作值多少底池。'),
-          ),
-        ),
-        this.detailEl,
-      ),
       h(
         'section.section',
         { id: 'spot' },
@@ -516,8 +475,11 @@ export class RiverView {
       else if (this.nodes[id]!.type === DECISION) steps.unshift({ to: id, text: [`${this.players[parent.player]} ${this.verb(parent.actions[index]!, parent)}`] });
       else steps.unshift({ to: -1, text: [`${this.players[parent.player]} ${this.verb(parent.actions[index]!, parent)}`] });
     }
+    let back = node.parent;
+    while (back >= 0 && this.nodes[back]!.type !== DECISION) back = this.nodes[back]!.parent;
     keepFocus(this.pathEl, () => replace(
       this.pathEl,
+      back >= 0 ? h('button.back', { onclick: () => this.go(back) }, '← Back') : null,
       steps.length ? h('button', { onclick: () => this.go(0) }, first) : h('span.dim', first),
       steps.map((step) => [
         h('span.sep', { 'aria-hidden': 'true' }, '/'),
@@ -529,6 +491,19 @@ export class RiverView {
 
     // The actions. One that ends the turn leads on to the choice of a river card.
     const look = drawing(node);
+    const leads = node.children.some((id) => {
+      const child = this.nodes[id]!;
+      return child.type === DECISION || (child.type === CHANCE && this.nodes[child.children[0]!]!.type === DECISION);
+    });
+    replace(
+      this.decideEl,
+      h('div.decide-who', `${this.players[node.player]} to act`),
+      h(
+        'p.dim',
+        `Each square of the grid is one starting hand, and its bar shows how the hand is split between these actions.${leads ? ' Choose an action with an arrow to see the answer to it.' : ''}`,
+        h('span.zh', { lang: 'zh-Hans' }, `方格里每格是一种起手牌，格里的条形按下面几种动作分配。${leads ? '点带箭头的动作，看对手怎么应对。' : ''}`),
+      ),
+    );
     keepFocus(this.legendEl, () => replace(
       this.legendEl,
       look.order.map((index) => {
@@ -705,6 +680,7 @@ export class RiverView {
 
     const text = percent(frame.exploitability);
     replace(this.figureEl, text.slice(0, -1), h('span.unit', '%'));
+    replace(this.errEl, finished ? 'Solved to ' : 'Solving, at ', h('b', text), ' of the pot');
     this.labelEl.textContent = finished
       ? `After ${integer(frame.iteration)} iterations, exploitable for`
       : `At iteration ${integer(frame.iteration)}, exploitable for`;
@@ -778,7 +754,7 @@ export class RiverView {
       .map((a) => ({ a, f: part.freq[cell * actions + a]! / 255 }))
       .filter((p) => p.f >= 0.005)
       .map((p) => `${this.actionText(node, p.a).name} ${frequency(p.f, 0)}`);
-    replace(this.readoutEl, h('span.what', h('b', CLASS_NAMES[cell]!), '  ', parts.join(', ')), h('span.dim', 'Select for every combination'));
+    replace(this.readoutEl, h('span.what', h('b', CLASS_NAMES[cell]!), '  ', parts.join(', ')), h('span.dim', 'Click to keep it selected'));
   }
 
   /** A text version of the result for screen readers. */
@@ -796,6 +772,8 @@ export class RiverView {
   private renderSpot(): void {
     const custom = this.presetEl.value === 'custom';
     this.titleEl.textContent = custom ? '你自己的局面' : this.preset.titleZh;
+    this.spotNameEl.textContent = custom ? 'Your own spot' : this.preset.title;
+    this.syncExamples();
     this.renderBoard();
     replace(
       this.storyEl,
@@ -803,6 +781,14 @@ export class RiverView {
       h('span.zh', { lang: 'zh-Hans' }, custom ? '你自己设的局面。' : this.preset.lineZh),
     );
     this.renderPlayed();
+  }
+
+  private syncExamples(): void {
+    this.examplesEl.querySelectorAll<HTMLElement>('button').forEach((button) => {
+      const on = button.dataset.id === this.presetEl.value;
+      button.setAttribute('aria-pressed', String(on));
+      if (button.dataset.id === 'custom') button.hidden = !on;
+    });
   }
 
   private renderBlock(): void {
@@ -894,12 +880,17 @@ export class RiverView {
 
   private renderDetail(): void {
     const node = this.nodes[this.nodeId];
-    const cell = this.selected >= 0 ? this.selected : (this.grid.marks[0] ?? -1);
-    replace(this.detailHead, gloss(cell >= 0 ? `${CLASS_NAMES[cell]}, combination by combination` : 'Combination by combination', '逐个组合'));
+    const hovered = this.grid.hover >= 0;
+    const cell = hovered ? this.grid.hover : this.selected >= 0 ? this.selected : (this.grid.marks[0] ?? -1);
+    const why = hovered ? 'under the pointer' : this.selected >= 0 ? 'selected' : 'the hand actually held';
+    replace(
+      this.detailHead,
+      cell >= 0 ? [h('b', CLASS_NAMES[cell]!), ', every combination', h('span.zh', { lang: 'zh-Hans' }, '逐个组合'), h('span.dim', why)] : gloss('One hand, every combination', '逐个组合'),
+    );
     if (!node) return;
     const combos = this.details.get(this.nodeId);
     if (cell < 0) {
-      replace(this.detailEl, h('p.dim', 'No hand selected.'));
+      replace(this.detailEl, h('p.dim', 'Point at a hand in the grid to see each combination of it; click to keep it.', h('span.zh', { lang: 'zh-Hans' }, '指向矩阵里的一手牌看它的每个组合，点一下固定。')));
       return;
     }
     if (!combos) {
@@ -920,7 +911,6 @@ export class RiverView {
         h(
           'tr',
           h('th', { scope: 'col' }, 'Hand'),
-          h('th', { scope: 'col' }, 'In range'),
           h('th', { scope: 'col', 'aria-label': 'Mix' }),
           look.order.map((i) => h('th', { scope: 'col' }, this.actionText(node, i).name)),
           h('th', { scope: 'col' }, 'Worth'),
@@ -933,7 +923,6 @@ export class RiverView {
           return h(
             'tr',
             h('td', cards([COMBO_HI[d.combo]!, COMBO_LO[d.combo]!])),
-            h('td', frequency(d.reach, 0)),
             h(
               'td.bar',
               h(
@@ -960,8 +949,9 @@ export class RiverView {
       h('div', { style: { overflowX: 'auto' } }, table),
       h(
         'p.dim',
-        { style: { marginTop: '12px', maxWidth: '72ch' } },
-        'Beside each frequency is what that action is worth to the hand, as a share of the starting pot. Where a hand mixes, its actions are worth the same, or nearly: the gap is part of what the tolerance measures.',
+        { style: { marginTop: '8px' } },
+        'The small figure beside each frequency is what that action is worth to the hand, as a share of the pot. Where a hand mixes, its actions are worth nearly the same.',
+        h('span.zh', { lang: 'zh-Hans' }, '频率旁的小数字是该动作对这手牌值多少底池；混合时各动作的价值几乎相等。'),
       ),
     );
   }
@@ -1154,6 +1144,7 @@ export class RiverView {
       this.spot.tree.stack === preset.tree.stack;
     this.presetEl.value = same ? this.preset.id : 'custom';
     this.players = same ? this.preset.players : ['First player', 'Second player'];
+    this.syncExamples();
     this.drawEditor();
     clearTimeout(this.solveTimer);
     const problem = this.problem();

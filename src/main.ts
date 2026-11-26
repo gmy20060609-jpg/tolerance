@@ -1,7 +1,7 @@
-// Tolerance: the page shell. Four tools, one per route.
+// Tolerance: the page shell. A front page and four tools, one per route.
 
 import { gloss, h } from './ui/dom.ts';
-import { RiverView } from './views/river.ts';
+import { HomeView } from './views/home.ts';
 
 interface View {
   el: HTMLElement;
@@ -10,8 +10,9 @@ interface View {
 }
 
 const routes: { hash: string; en: string; zh: string; load: () => Promise<View> }[] = [
-  // The river view is the first screen, so it ships with the page itself.
-  { hash: '#river', en: 'River', zh: '河牌', load: async () => new RiverView() },
+  // The front page is the first screen, so it ships with the page itself.
+  { hash: '', en: '', zh: '', load: async () => new HomeView() },
+  { hash: '#river', en: 'Solver', zh: '求解器', load: async () => new (await import('./views/river.ts')).RiverView() },
   { hash: '#push-or-fold', en: 'Push or fold', zh: '全下或弃牌', load: async () => new (await import('./views/pushfold.ts')).PushFoldView() },
   { hash: '#equity', en: 'Equity', zh: '胜率', load: async () => new (await import('./views/equity.ts')).EquityView() },
   { hash: '#proof', en: 'Proof', zh: '验证', load: async () => new (await import('./views/proof.ts')).ProofView() },
@@ -19,12 +20,12 @@ const routes: { hash: string; en: string; zh: string; load: () => Promise<View> 
 
 const app = document.getElementById('app')!;
 const slot = h('div.slot');
-const links = routes.map((route) => h('a', { href: route.hash }, gloss(route.en, route.zh)));
+const links = routes.map((route) => (route.hash ? h('a', { href: route.hash }, gloss(route.en, route.zh)) : null));
 
 app.append(
   h(
     'header.top',
-    h('a.mark', { href: '#river', 'aria-label': 'Tolerance, home' }, gloss('Tolerance', '公差')),
+    h('a.mark', { href: '#', 'aria-label': 'Tolerance, front page' }, gloss('Tolerance', '公差')),
     h('nav.nav', { 'aria-label': 'Tools' }, links),
     h('a.by', { href: 'https://karnak.design', target: '_blank', rel: 'noopener' }, 'Karnak'),
   ),
@@ -50,12 +51,13 @@ const views = new Map<string, View>();
 let current: (typeof routes)[number] | undefined;
 
 async function show(): Promise<void> {
-  // Any other hash is an anchor inside the river view.
-  const anchor = location.hash && !routes.some((r) => r.hash === location.hash) ? location.hash : '';
-  const route = routes.find((r) => r.hash === location.hash) ?? routes[0]!;
+  // Any other hash is an anchor inside the solver.
+  const hash = location.hash === '#' ? '' : location.hash;
+  const anchor = hash && !routes.some((r) => r.hash === hash) ? hash : '';
+  const route = routes.find((r) => r.hash === hash) ?? routes[1]!;
   if (route !== current) {
     current = route;
-    links.forEach((link, i) => (routes[i] === route ? link.setAttribute('aria-current', 'page') : link.removeAttribute('aria-current')));
+    links.forEach((link, i) => (routes[i] === route ? link?.setAttribute('aria-current', 'page') : link?.removeAttribute('aria-current')));
     let view = views.get(route.hash);
     if (!view) {
       view = await route.load();
@@ -64,7 +66,8 @@ async function show(): Promise<void> {
     if (current !== route) return; // another navigation won the race
     slot.replaceChildren(view.el);
     view.opened?.();
-    document.title = `${route.en} · Tolerance`;
+    document.title = route.en ? `${route.en} · Tolerance` : 'Tolerance. A heads-up poker solver that states its error';
+    document.documentElement.dataset.view = route.hash.slice(1) || 'home';
     if (!anchor) window.scrollTo(0, 0);
   } else if (!anchor) {
     window.scrollTo(0, 0);
@@ -75,9 +78,10 @@ async function show(): Promise<void> {
 window.addEventListener('hashchange', show);
 show();
 
-// Fetch the other three views once the first one is up, so switching is instant.
+// Fetch the other views once the first one is up, so switching is instant.
 const idle = (window as { requestIdleCallback?: (run: () => void) => void }).requestIdleCallback ?? ((run: () => void) => setTimeout(run, 1500));
 idle(() => {
+  void import('./views/river.ts');
   void import('./views/pushfold.ts');
   void import('./views/equity.ts');
   void import('./views/proof.ts');
