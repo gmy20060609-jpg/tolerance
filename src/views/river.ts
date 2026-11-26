@@ -515,8 +515,8 @@ export class RiverView {
     const text = percent(frame.exploitability);
     replace(this.figureEl, text.slice(0, -1), h('span.unit', '%'));
     this.labelEl.textContent = finished
-      ? `Exploitable for, after ${integer(frame.iteration)} iterations`
-      : `Exploitable for, at iteration ${integer(frame.iteration)}`;
+      ? `After ${integer(frame.iteration)} iterations, exploitable for`
+      : `At iteration ${integer(frame.iteration)}, exploitable for`;
 
     // The legend's figures.
     const node = this.nodes[this.nodeId];
@@ -569,7 +569,7 @@ export class RiverView {
       }
       replace(
         this.readoutEl,
-        h('span.what', `${this.players[node.player]}'s strategy, hand by hand`),
+        h('span.what', `${this.players[node.player]}, hand by hand`),
         h('span.dim', `${settled} of ${inPlay} hands settled`),
       );
       return;

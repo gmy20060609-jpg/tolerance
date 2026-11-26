@@ -59,7 +59,7 @@ async function kuhn(emit: Emit, breathe: () => Promise<void>): Promise<void> {
     const facingBet = solver.averageStrategy(root.children[1]!);
     const value = solver.gameValue(0);
     return [
-      { label: 'Value to the first player', expected: (-1 / 18).toFixed(7), measured: value.toFixed(7), ok: done ? Math.abs(value + 1 / 18) < 1e-5 : null },
+      { label: 'Value to the first player', expected: (-1 / 18).toFixed(7).replace('-', '−'), measured: value.toFixed(7).replace('-', '−'), ok: done ? Math.abs(value + 1 / 18) < 1e-5 : null },
       { label: 'Second player bluffs the jack', expected: (1 / 3).toFixed(4), measured: afterCheck[3]!.toFixed(4), ok: done ? Math.abs(afterCheck[3]! - 1 / 3) < 1e-3 : null },
       { label: 'Second player calls with the queen', expected: (1 / 3).toFixed(4), measured: facingBet[4]!.toFixed(4), ok: done ? Math.abs(facingBet[4]! - 1 / 3) < 1e-3 : null },
       { label: 'Exploitability, antes', expected: 'below 0.0001', measured: solver.exploitability().toFixed(7), ok: done ? solver.exploitability() < 1e-4 : null },
@@ -110,16 +110,18 @@ async function pushfold(table: PreflopTable, emit: Emit, breathe: () => Promise<
     const who = side === 'push' ? 'Small blind pushes' : 'Big blind calls';
     rows.push({
       label: `${who}: hands within 0.1 bb of the chart`,
-      expected: `${cells} of ${cells}`,
+      expected: `${cells} compared`,
       measured: `${cells - r.beyond.length} of ${cells}`,
       ok: r.beyond.length <= (side === 'push' ? 1 : 0),
+      word: r.beyond.length ? 'one apart' : 'matches',
     });
     for (const b of r.beyond) {
       rows.push({
-        label: `${b.hand}: published at the start of a span where the hand is mixed`,
+        label: `${b.hand}, the one apart: published where its mixed span begins`,
         expected: b.published.toFixed(1),
-        measured: `${b.published.toFixed(1)} to ${b.solved.toFixed(2)}`,
+        measured: `mixed, ${b.published.toFixed(1)} to ${b.solved.toFixed(1)}`,
         ok: r.outsideSpan.length === 0,
+        word: 'inside',
       });
     }
   }
@@ -148,9 +150,8 @@ async function river(emit: Emit, breathe: () => Promise<void>): Promise<void> {
   const plain = referenceExploitability(solver);
   emit({
     rows: [
-      { label: 'Exploitability, sorted pass', expected: pct(plain), measured: pct(fast), ok: Math.abs(fast - plain) < 1e-9 * spot.tree.pot },
-      { label: 'Exploitability, every pair of hands', expected: '', measured: pct(plain), ok: null },
-      { label: 'Both players’ results add up to', expected: '0', measured: (solver.gameValue(0) + solver.gameValue(1)).toFixed(9), ok: Math.abs(solver.gameValue(0) + solver.gameValue(1)) < 1e-9 },
+      { label: 'Exploitability after 1,000 iterations', expected: pct(plain), measured: pct(fast), ok: Math.abs(fast - plain) < 1e-9 * spot.tree.pot },
+      { label: 'The two players’ results add up to', expected: '0', measured: Math.abs(solver.gameValue(0) + solver.gameValue(1)).toFixed(9), ok: Math.abs(solver.gameValue(0) + solver.gameValue(1)) < 1e-9 },
     ],
     progress: 1,
     done: true,

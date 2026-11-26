@@ -65,12 +65,16 @@ export interface EquityResult {
   /** Boards dealt (hands, ranges) or boards counted in the table (preflop). */
   boards: number;
   byCombo?: [Float64Array, Float64Array];
+  /** Hands mode: the result of every board in the order dealt. 0 second hand wins, 1 tie, 2 first hand wins. */
+  outcomes?: Uint8Array;
+  /** Hands mode: the cards still in the deck, in dealing order. */
+  live?: number[];
   ms: number;
 }
 
 export interface ProofUpdate {
   /** Rows of label, expected, measured. */
-  rows: { label: string; expected: string; measured: string; ok: boolean | null }[];
+  rows: { label: string; expected: string; measured: string; ok: boolean | null; word?: string }[];
   progress: number;
   done: boolean;
   note?: string;

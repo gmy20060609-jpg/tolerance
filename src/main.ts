@@ -4,6 +4,8 @@ import { gloss, h } from './ui/dom.ts';
 
 interface View {
   el: HTMLElement;
+  /** Called each time the view is shown. */
+  opened?(): void;
 }
 
 const routes: { hash: string; en: string; zh: string; load: () => Promise<View> }[] = [
@@ -41,6 +43,8 @@ async function show(): Promise<void> {
     views.set(route.hash, view);
   }
   slot.replaceChildren(view.el);
+  view.opened?.();
+  window.scrollTo(0, 0);
   document.title = `${route.en} · Tolerance`;
 }
 

@@ -2,7 +2,7 @@
 // The engine runs here, off the main thread.
 
 import { COMBO_CLASS, COMBO_COUNT } from '../engine/cards.ts';
-import { handVsHand, rangeVsRange } from '../engine/equity.ts';
+import { forEachRunout, handVsHand, rangeVsRange } from '../engine/equity.ts';
 import { readPreflopTable, solvePushFold, BOARDS_PER_MATCHUP, type PreflopTable } from '../engine/pushfold.ts';
 import { riverSolver } from '../engine/river.ts';
 import type { Solver } from '../engine/solver.ts';
@@ -109,11 +109,28 @@ async function equity(request: Extract<Request, { type: 'equity' }>): Promise<vo
   const { a, b, board, exact } = request;
   if (exact) {
     const r = handVsHand(exact[0], exact[1], board);
-    post({
-      type: 'equity',
-      id: request.id,
-      result: { mode: 'hands', equity: [r.equity, 1 - r.equity], win: r.win, tie: r.tie, lose: r.lose, boards: r.total, ms: performance.now() - started },
+    const ms = performance.now() - started;
+    // A second pass keeps the result of every board, for the picture.
+    const outcomes = new Uint8Array(r.total);
+    const [a0, a1] = exact[0] as [number, number];
+    const [b0, b1] = exact[1] as [number, number];
+    let at = 0;
+    forEachRunout(board, [a0, a1, b0, b1], (state) => {
+      const x = state.with2(a0, a1);
+      const y = state.with2(b0, b1);
+      outcomes[at++] = x > y ? 2 : x < y ? 0 : 1;
     });
+    const used = new Set([...board, a0, a1, b0, b1]);
+    const live: number[] = [];
+    for (let c = 0; c < 52; c++) if (!used.has(c)) live.push(c);
+    post(
+      {
+        type: 'equity',
+        id: request.id,
+        result: { mode: 'hands', equity: [r.equity, 1 - r.equity], win: r.win, tie: r.tie, lose: r.lose, boards: r.total, outcomes, live, ms },
+      },
+      [outcomes.buffer],
+    );
     return;
   }
   if (board.length >= 3) {

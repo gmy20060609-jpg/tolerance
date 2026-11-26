@@ -885,18 +885,29 @@ h2 .zh {
   }
 
   .figure {
-    font-size: 60px;
+    font-size: 68px;
   }
 
   .result {
-    gap: 4px 16px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
   }
 
-  .story {
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+  .result .caption {
+    max-width: none;
+  }
+
+  .spot-head .zh {
+    display: none;
+  }
+
+  .spot {
+    display: grid;
+    gap: 6px;
+  }
+
+  .story .zh {
+    display: none;
   }
 
   .legend button {
@@ -1148,7 +1159,22 @@ h2 .zh {
 }
 
 .split .t {
-  background: repeating-linear-gradient(135deg, var(--ink) 0 1px, transparent 1px 4px);
+  background: var(--red);
+}
+
+.field {
+  width: 100%;
+  min-height: 1px;
+}
+
+.field canvas {
+  image-rendering: pixelated;
+  touch-action: auto;
+}
+
+.field + p .zh {
+  display: block;
+  margin: 2px 0 0;
 }
 
 .split .b {

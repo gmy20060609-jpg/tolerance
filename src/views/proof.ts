@@ -55,7 +55,7 @@ const CHECKS: Check[] = [
     zh: '可剥削度量两遍',
     what: 'A real river spot, 438 hands against 542. The number this site shows is computed in one sorted pass over each range.',
     against: 'The same number computed the plain way, comparing every pair of hands, with no shortcuts shared.',
-    columns: ['Every pair', 'Sorted pass'],
+    columns: ['Every pair of hands', 'Sorted pass'],
   },
   {
     id: 'pushfold',
@@ -74,13 +74,13 @@ export class ProofView {
   private running = false;
   private queue: string[] = [];
   private readonly parts = new Map<string, { state: HTMLElement; body: HTMLElement; bar: HTMLElement; note: HTMLElement; started: number }>();
-  private readonly runAll = h('button.btn.primary', { onclick: () => this.start(CHECKS.map((c) => c.id)) }, 'Run every check in this tab') as HTMLButtonElement;
+  private readonly runAll = h('button.btn.primary', { onclick: () => this.start(CHECKS.map((c) => c.id)) }, 'Run them all again') as HTMLButtonElement;
 
   constructor() {
     const list = h(
       'div.checks',
       CHECKS.map((check) => {
-        const state = h('span.state', 'Not run in this tab');
+        const state = h('span.state', 'Waiting');
         const body = h('tbody');
         const bar = h('i');
         const note = h('p.dim');
@@ -124,8 +124,8 @@ export class ProofView {
             'div',
             h(
               'p',
-              'A solver that is wrong still prints a grid. So each part is held against something outside it: a published count, a game solved by hand, a closed form, a published chart, or the same quantity computed a second way. The checks below are the ones in the test suite, and they run again here, in your browser.',
-              h('span.zh', { lang: 'zh-Hans' }, '错的求解器照样能画出一张矩阵。所以每个部件都对照一个外部事实：公开计数、手算可解的游戏、闭式解、公开图表，或同一个量的第二种算法。下面就是测试套件里的检查，可以在你的浏览器里再跑一遍。'),
+              'A solver that is wrong still prints a grid. So each part is held against something outside it: a published count, a game solved by hand, a closed form, a published chart, or the same quantity computed a second way. The checks below are the ones in the test suite. They are running now, in your browser.',
+              h('span.zh', { lang: 'zh-Hans' }, '错的求解器照样能画出一张矩阵。所以每个部件都对照一个外部事实：公开计数、手算可解的游戏、闭式解、公开图表，或同一个量的第二种算法。下面就是测试套件里的检查，此刻正在你的浏览器里重新跑。'),
             ),
             h('p', { style: { marginTop: '16px' } }, this.runAll, h('span.dim', { style: { marginLeft: '12px' } }, 'About half a minute.')),
           ),
@@ -135,7 +135,15 @@ export class ProofView {
     );
   }
 
+  /** Runs every check the first time the page is opened. */
+  opened(): void {
+    if (!this.ran) this.start(CHECKS.map((c) => c.id));
+  }
+
+  private ran = false;
+
   private start(ids: string[]): void {
+    this.ran = true;
     if (this.running) return;
     this.worker ??= this.spawn();
     this.queue = [...ids];
@@ -186,7 +194,7 @@ export class ProofView {
             h('td', row.label),
             h('td', row.expected),
             h('td', row.measured),
-            h('td', { class: row.ok === false ? 'error' : '' }, row.ok === null ? '' : row.ok ? 'matches' : 'differs'),
+            h('td', { class: row.ok === false ? 'error' : '' }, row.word ?? (row.ok === null ? '' : row.ok ? 'matches' : 'differs')),
           ),
         ),
       );

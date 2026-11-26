@@ -263,9 +263,11 @@ export class PushFoldView {
     const x = (stack: number) => Math.round(inset + ((width - 2 * inset) * (stack - MIN)) / (MAX - MIN));
     const base = height - Math.round(22 * dpr);
     const hair = Math.max(1, Math.round(dpr / 2));
+    const fine = (width - 2 * inset) / dpr / (key(MAX) - key(MIN)) >= 3;
     for (let k = key(MIN); k <= key(MAX); k++) {
       const whole = k % 10 === 0;
       const half = k % 5 === 0;
+      if (!fine && !half) continue;
       const length = (whole ? 22 : half ? 13 : 7) * dpr;
       ctx.fillStyle = this.solved.has(k) ? INK : INK_4;
       ctx.fillRect(x(k / 10), base - length, whole ? dpr : hair, length);
