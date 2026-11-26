@@ -6,10 +6,14 @@ import { handVsHand } from '../engine/equity.ts';
 import { BoardState, CATEGORY_NAMES, categoryOf } from '../engine/evaluator.ts';
 import { solvePushFold, type PreflopTable, type PushFoldSolution } from '../engine/pushfold.ts';
 import { riverSolver } from '../engine/river.ts';
+import { turnSolver } from '../engine/turn.ts';
+import { gridViewAt } from '../engine/view.ts';
 import { wetRiver } from '../spots.ts';
 import type { ProofUpdate } from '../worker/protocol.ts';
+import { RIVER_REFERENCE, TURN_REFERENCE } from './crosscheck.ts';
 import { compareChart, compareSpans, sweepStacks } from './hune.ts';
 import { kuhnSolver } from './kuhn.ts';
+import { LEDUC_VALUE, leducSolver } from './leduc.ts';
 import { referenceExploitability } from './pairwise.ts';
 import { POLAR_CASES, polarResult, polarSolver } from './polar.ts';
 
@@ -188,6 +192,71 @@ async function equity(table: PreflopTable, emit: Emit, breathe: () => Promise<vo
   emit({ rows: rows(true), progress: 1, done: true, note: `${int(pairs * 1712304)} boards dealt, ${CLASS_NAMES[i]} against ${CLASS_NAMES[j]}` });
 }
 
+async function leduc(emit: Emit, breathe: () => Promise<void>): Promise<void> {
+  const solver = leducSolver();
+  const rows = (done: boolean): Row[] => {
+    const value = solver.gameValue(0);
+    return [
+      { label: 'Value to the first player', expected: LEDUC_VALUE.toFixed(4).replace('-', '−'), measured: value.toFixed(6).replace('-', '−'), ok: done ? Math.abs(value - LEDUC_VALUE) < 5e-5 : null },
+      { label: 'Exploitability, antes', expected: 'below 0.001', measured: solver.exploitability().toFixed(6), ok: done ? solver.exploitability() < 1e-3 : null },
+    ];
+  };
+  for (const target of [10, 30, 100, 300, 1000, 3000]) {
+    solver.iterate(target - solver.iteration);
+    emit({ rows: rows(false), progress: target / 3000, done: false, note: `${int(target)} iterations` });
+    await breathe();
+  }
+  emit({ rows: rows(true), progress: 1, done: true, note: '3,000 iterations, 936 decisions' });
+}
+
+async function crosscheck(emit: Emit, breathe: () => Promise<void>): Promise<void> {
+  const rows: Row[] = [];
+  const cases = [
+    { reference: RIVER_REFERENCE, steps: [100, 400, 1000, 2000], label: 'River' },
+    { reference: TURN_REFERENCE, steps: [20, 60, 120, 200], label: 'Turn' },
+  ];
+  let step = 0;
+  for (const { reference, steps, label } of cases) {
+    const spot = { board: reference.board, ranges: reference.ranges, tree: reference.tree };
+    const solver = reference.board.length === 4 ? turnSolver(spot) : riverSolver(spot);
+    for (const target of steps) {
+      solver.iterate(target - solver.iteration);
+      step++;
+      emit({ rows: rows.slice(), progress: step / 8, done: false, note: `${label}: ${int(target)} iterations` });
+      await breathe();
+    }
+    const pot = reference.tree.pot;
+    const value = solver.gameValue(0) + pot / 2;
+    rows.push({
+      label: `${label}: first player's value, of a pot of ${pot}`,
+      expected: reference.value.toFixed(4),
+      measured: value.toFixed(4),
+      ok: Math.abs(value - reference.value) / pot < 1e-4,
+    });
+    let worst = 0;
+    for (const line of reference.lines) {
+      let id = 0;
+      for (const action of line.path) id = solver.tree.nodes[id]!.children[action]!;
+      const view = gridViewAt(solver, id);
+      line.frequencies.forEach((want, a) => (worst = Math.max(worst, Math.abs(view.overall[a]! - want))));
+    }
+    const first = gridViewAt(solver, 0);
+    rows.push({
+      label: `${label}: first action taken`,
+      expected: reference.lines[0]!.frequencies.map((f) => `${(100 * f).toFixed(1)}%`).join(' / '),
+      measured: Array.from(first.overall, (f) => `${(100 * f).toFixed(1)}%`).join(' / '),
+      ok: worst < 0.01,
+    });
+    rows.push({
+      label: `${label}: largest gap in any action frequency, ${reference.lines.length} decisions`,
+      expected: 'below 1 point',
+      measured: `${(100 * worst).toFixed(2)} points`,
+      ok: worst < 0.01,
+    });
+  }
+  emit({ rows, progress: 1, done: true, note: 'Reference: postflop-solver, commit 9d1509f, solved to 0.002% of the pot' });
+}
+
 export async function runCheck(
   check: string,
   table: () => Promise<PreflopTable>,
@@ -207,6 +276,10 @@ export async function runCheck(
       return river(emit, breathe);
     case 'equity':
       return equity(await table(), emit, breathe);
+    case 'leduc':
+      return leduc(emit, breathe);
+    case 'crosscheck':
+      return crosscheck(emit, breathe);
     default:
       throw new Error(`Unknown check "${check}"`);
   }

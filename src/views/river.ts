@@ -312,6 +312,7 @@ export class RiverView {
     this.scrub = null;
     this.shown = -1;
     this.statusEl.textContent = 'Solving';
+    replace(this.noteEl, 'Solving.');
     this.renderSpot();
     // A turn carries 48 rivers with it, so it is kept to one bet size and one raise a street.
     const turn = this.spot.board.length === 4;
@@ -722,10 +723,16 @@ export class RiverView {
           : this.reason === 'stopped'
             ? `Stopped after ${integer(lastFrame.iteration)} iterations, ${seconds(lastFrame.ms)}.`
             : `Stopped at the limit of ${integer(lastFrame.iteration)} iterations, ${seconds(lastFrame.ms)}.`;
+      // A fast solve is over before it can be watched, so it is replayed; a slow one was shown as it ran.
+      const replayed = lastFrame.ms < 1500;
       replace(
         this.noteEl,
-        `${how} Replayed here at reading speed: drag across the chart to step through it.`,
-        h('span.zh', { lang: 'zh-Hans' }, ` 实际求解 ${seconds(lastFrame.ms)}，此处按可读速度重放；在图上拖动可逐步回看。`),
+        replayed ? `${how} Replayed here at reading speed: drag across the chart to step through it.` : `${how} Drag across the chart to step back through it.`,
+        h(
+          'span.zh',
+          { lang: 'zh-Hans' },
+          replayed ? ` 实际求解 ${seconds(lastFrame.ms)}，此处按可读速度重放；在图上拖动可逐步回看。` : ` 求解用时 ${seconds(lastFrame.ms)}；在图上拖动可逐步回看。`,
+        ),
       );
     } else {
       replace(this.noteEl, `Solving. ${seconds(lastFrame.ms)} so far.`);

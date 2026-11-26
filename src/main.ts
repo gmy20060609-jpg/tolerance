@@ -33,8 +33,8 @@ app.append(
     'footer.foot',
     h(
       'p',
-      'Tolerance solves heads-up poker in two places: any river, and all-in-or-fold play before the flop. Every answer is stated with what a perfect opponent could still win from it.',
-      h('span.zh', { lang: 'zh-Hans' }, '公差只解单挑的两处：任意河牌，以及翻前的全下或弃牌。每个答案都附带完美对手还能多赢多少。'),
+      'Tolerance solves heads-up poker in three places: any river, a turn with every river after it, and all-in-or-fold play before the flop. Every answer is stated with what a perfect opponent could still win from it.',
+      h('span.zh', { lang: 'zh-Hans' }, '公差只解单挑的三处：任意河牌、转牌连同其后的每张河牌，以及翻前的全下或弃牌。每个答案都附带完美对手还能多赢多少。'),
     ),
     h(
       'p',
