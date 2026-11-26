@@ -19,7 +19,7 @@ export function availableCombos(board: ArrayLike<number>): Float64Array {
 export interface GridView {
   /** freq[class * actions + action]: how often the class takes the action, in 1/255ths. */
   freq: Uint8Array;
-  /** fill[class]: share of the class's possible combos that reach the node, in 1/255ths. */
+  /** fill[class]: how much of the class's starting weight reaches the node, in 1/255ths. */
   fill: Uint8Array;
   /** How often each action is taken at the node over the whole range. */
   overall: Float32Array;
@@ -29,10 +29,16 @@ export interface GridView {
  * The grid view of every decision node under the current average strategies,
  * indexed by node id (undefined for terminal nodes).
  */
-export function gridViews(solver: Solver, available: Float64Array): (GridView | undefined)[] {
+export function gridViews(solver: Solver): (GridView | undefined)[] {
   const nodes = solver.tree.nodes;
   const views: (GridView | undefined)[] = new Array(nodes.length);
   const classOf = solver.hands.map((hands) => Uint8Array.from(hands.label, (combo) => COMBO_CLASS[combo]!));
+  // What each class weighs in the starting ranges: the full height of its bar.
+  const starting = solver.hands.map((hands, p) => {
+    const sum = new Float64Array(169);
+    for (let h = 0; h < hands.n; h++) sum[classOf[p]![h]!]! += hands.weight[h]!;
+    return sum;
+  });
   const mass = [new Float64Array(solver.hands[0].n), new Float64Array(solver.hands[1].n)];
   const classReach = new Float64Array(169);
   const classAction = new Float64Array(169 * 8);
@@ -71,7 +77,7 @@ export function gridViews(solver: Solver, available: Float64Array): (GridView | 
     for (let c = 0; c < 169; c++) {
       const r = classReach[c]!;
       if (r <= 0) continue;
-      fill[c] = Math.max(1, Math.round((255 * r) / available[c]!));
+      fill[c] = Math.max(1, Math.round((255 * r) / starting[p]![c]!));
       for (let a = 0; a < actions; a++) freq[c * actions + a] = Math.round((255 * classAction[c * actions + a]!) / r);
     }
     if (total > 0) for (let a = 0; a < actions; a++) overall[a]! /= total;

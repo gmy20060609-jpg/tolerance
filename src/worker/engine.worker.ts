@@ -7,7 +7,7 @@ import { readPreflopTable, solvePushFold, BOARDS_PER_MATCHUP, type PreflopTable 
 import { riverSolver } from '../engine/river.ts';
 import type { Solver } from '../engine/solver.ts';
 import { DECISION } from '../engine/tree.ts';
-import { availableCombos, comboDetails, gridViews } from '../engine/view.ts';
+import { comboDetails, gridViews } from '../engine/view.ts';
 import { runCheck } from '../proof/checks.ts';
 import type { Frame, Request, Response, RiverJob } from './protocol.ts';
 import tableUrl from '../engine/data/preflop-equity.bin?url';
@@ -43,7 +43,6 @@ async function solveRiver(job: RiverJob): Promise<void> {
   const run = { id: job.id, solver, stopped: false };
   current = run;
   const nodes = solver.tree.nodes;
-  const available = availableCombos(job.board);
 
   const offsets = new Int32Array(nodes.length).fill(-1);
   const overallOffsets = new Int32Array(nodes.length).fill(-1);
@@ -60,7 +59,7 @@ async function solveRiver(job: RiverJob): Promise<void> {
 
   let ms = 0;
   const frame = (): Frame => {
-    const views = gridViews(solver, available);
+    const views = gridViews(solver);
     const data = new Uint8Array(size);
     const overall = new Float32Array(overallSize);
     for (const node of nodes) {
@@ -77,22 +76,27 @@ async function solveRiver(job: RiverJob): Promise<void> {
   let last = frame();
   send(last);
   let reason: 'tolerance' | 'limit' | 'stopped' = 'limit';
+  // Work in slices of about a frame's length. Yielding after every small step
+  // lets the processor fall back to its slow cores between them.
+  let slice = performance.now();
   while (solver.iteration < job.maxIterations) {
     const target = Math.min(job.maxIterations, nextStop(solver.iteration));
     const started = performance.now();
     solver.iterate(target - solver.iteration);
     ms += performance.now() - started;
     last = frame();
-    const reached = last.exploitability <= job.tolerance;
     send(last);
-    if (reached) {
+    if (last.exploitability <= job.tolerance) {
       reason = 'tolerance';
       break;
     }
-    await breathe();
-    if (run.stopped) {
-      reason = 'stopped';
-      break;
+    if (performance.now() - slice > 14) {
+      await breathe();
+      slice = performance.now();
+      if (run.stopped) {
+        reason = 'stopped';
+        break;
+      }
     }
   }
   post({ type: 'done', id: job.id, reason });
