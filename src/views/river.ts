@@ -15,10 +15,10 @@ import {
 import { parseRange, setClass } from '../engine/range.ts';
 import { DECISION, type Action, type TreeConfig, type TreeNode } from '../engine/tree.ts';
 import type { ComboDetail } from '../engine/view.ts';
-import { PRESETS, type Preset } from '../spots.ts';
+import { PRESETS, type Pin, type Preset } from '../spots.ts';
 import { card, cards } from '../ui/cards.ts';
 import { ConvergenceChart } from '../ui/chart.ts';
-import { frameLoop, gloss, h, reducedMotion, replace } from '../ui/dom.ts';
+import { frameLoop, gloss, h, keepFocus, reducedMotion, replace } from '../ui/dom.ts';
 import { amount, frequency, integer, percent, seconds, share } from '../ui/format.ts';
 import { Grid, swatch, type GridData, type SegStyle } from '../ui/grid.ts';
 import type { Frame, Request, Response } from '../worker/protocol.ts';
@@ -26,6 +26,12 @@ import type { Frame, Request, Response } from '../worker/protocol.ts';
 const TOLERANCES = [0.01, 0.005, 0.001, 0.0005, 0.0001];
 const PLAYBACK = 42; // frames shown per second while a solve is replayed
 const MAX_ITERATIONS = 6000;
+
+/** One step of a line of play: a kind of action and, if it matters, its size. */
+interface Step {
+  kind: string;
+  to?: number;
+}
 
 interface Spot {
   board: number[];
@@ -91,14 +97,14 @@ export class RiverView {
   private overallOffsets: Int32Array = new Int32Array(0);
   private hands: [number, number] = [0, 0];
   private frames: Frame[] = [];
-  private status: 'solving' | 'done' = 'solving';
+  private status: 'solving' | 'done' | 'failed' = 'solving';
   private reason = '';
   private playhead = 0;
   private lastTick = 0;
   private scrub: number | null = null;
   private shown = -1;
   private nodeId = 0;
-  private wantPath: string[] | null = null;
+  private wantPath: Step[] | null = null;
   private selected = -1;
   private details = new Map<number, ComboDetail[]>();
   private solveTimer = 0;
@@ -150,6 +156,9 @@ export class RiverView {
       this.renderDetail();
       this.updateReadout();
     };
+    // While the grid has keyboard focus, each hand moved to is read out.
+    this.grid.el.addEventListener('focusin', () => this.readoutEl.setAttribute('aria-live', 'polite'));
+    this.grid.el.addEventListener('focusout', () => this.readoutEl.setAttribute('aria-live', 'off'));
     this.chart.onscrub = (index) => {
       this.scrub = index;
       this.loop.kick();
@@ -249,18 +258,43 @@ export class RiverView {
   }
 
   private load(preset: Preset): void {
+    clearTimeout(this.solveTimer);
     this.preset = preset;
     this.players = preset.players;
     this.spot = cloneSpot(preset);
     this.tolerance = preset.id === 'moneymaker-farha' ? 0.0001 : 0.001;
     this.presetEl.value = preset.id;
-    this.wantPath = preset.pins[0]?.path ?? [];
+    this.wantPath = (preset.pins[0]?.path ?? []).map((kind) => ({ kind }));
     this.selected = -1;
+    this.grid.selected = -1;
     this.syncEditor();
     this.solve();
   }
 
+  /** Why the spot cannot be solved as it stands, or an empty string. */
+  private problem(): string {
+    if (this.spot.board.length !== 5) return `Pick ${5 - this.spot.board.length} more board card${this.spot.board.length === 4 ? '' : 's'}.`;
+    const dead = new Set(this.spot.board);
+    for (let player = 0; player < 2; player++) {
+      let any = false;
+      for (let i = 0; i < COMBO_COUNT && !any; i++) {
+        any = this.spot.ranges[player]![i]! > 0 && !dead.has(COMBO_HI[i]!) && !dead.has(COMBO_LO[i]!);
+      }
+      if (!any) return `${this.players[player]} has no hand left. Paint at least one.`;
+    }
+    return '';
+  }
+
   private solve(): void {
+    clearTimeout(this.solveTimer);
+    const problem = this.problem();
+    this.editorError.textContent = problem;
+    if (problem) {
+      // Nothing is sent; the last solution stays on screen, marked as out of date.
+      this.statusEl.textContent = problem;
+      return;
+    }
+    if (this.wantPath === null) this.wantPath = this.pathSteps(this.nodeId);
     this.job++;
     this.frames = [];
     this.details.clear();
@@ -269,7 +303,7 @@ export class RiverView {
     this.lastTick = 0;
     this.scrub = null;
     this.shown = -1;
-    if (this.wantPath === null) this.wantPath = this.pathKinds(this.nodeId);
+    this.statusEl.textContent = 'Solving';
     this.renderSpot();
     this.send({
       type: 'river',
@@ -285,16 +319,19 @@ export class RiverView {
   private receive(message: Response): void {
     if (message.id !== this.job) return;
     switch (message.type) {
-      case 'tree':
+      case 'tree': {
         this.nodes = message.nodes;
         this.offsets = message.offsets;
         this.overallOffsets = message.overallOffsets;
         this.hands = message.hands;
-        this.nodeId = this.findPath(this.wantPath ?? []);
+        // Go back to where the view was. If the tree no longer has that line, stop where it ends.
+        this.nodeId = Math.max(0, this.findPath(this.wantPath ?? [], false));
         this.wantPath = null;
         this.renderNode();
         this.renderBlock();
+        this.renderPlayed();
         break;
+      }
       case 'frame':
         this.frames.push(message);
         this.loop.kick();
@@ -302,9 +339,10 @@ export class RiverView {
       case 'done':
         this.status = 'done';
         this.reason = message.reason;
-        for (const id of new Set([this.nodeId, ...this.pins().map((pin) => this.findPath(pin.path))])) {
+        for (const id of new Set([this.nodeId, ...this.pins().map((pin) => this.pinNode(pin))])) {
           if (this.nodes[id]?.type === DECISION) this.send({ type: 'detail', id: this.job, nodeId: id });
         }
+        this.shown = -1; // draw the last frame again, now as the finished one
         this.loop.kick();
         break;
       case 'detail':
@@ -313,34 +351,55 @@ export class RiverView {
         if (message.nodeId === this.nodeId) this.renderDetail();
         break;
       case 'error':
+        this.status = 'failed';
+        this.loop.stop();
         this.statusEl.textContent = message.message;
         this.editorError.textContent = message.message;
+        replace(this.noteEl, `Not solved: ${message.message}`);
+        replace(this.figureEl, '–');
+        this.labelEl.textContent = 'Not solved';
+        this.grid.set({ k: 1, seg: new Float32Array(169), fill: new Float32Array(169), styles: ['none'], tone: new Uint8Array(169) });
         break;
     }
   }
 
   // --- Moving around the tree ----------------------------------------------------
 
-  /** The node reached by taking, at each step, the first action of the given kind. */
-  private findPath(kinds: string[]): number {
+  /**
+   * The node reached by a line of play. Each step names a kind of action and,
+   * where a node offers several of that kind, the size closest to the one
+   * wanted. Returns -1 if the line cannot be followed to the end, or, when
+   * `strict` is false, the last decision it reaches.
+   */
+  private findPath(steps: Step[], strict: boolean): number {
     let id = 0;
-    for (const kind of kinds) {
+    for (const step of steps) {
       const node = this.nodes[id];
-      if (!node) return 0;
-      const index = node.actions.findIndex((action) => action.kind === kind);
-      if (index < 0 || this.nodes[node.children[index]!]!.type !== DECISION) break;
-      id = node.children[index]!;
+      if (!node) return strict ? -1 : 0;
+      let best = -1;
+      node.actions.forEach((action, index) => {
+        if (action.kind !== step.kind) return;
+        if (best < 0 || (step.to !== undefined && Math.abs(action.to - step.to) < Math.abs(node.actions[best]!.to - step.to))) best = index;
+      });
+      if (best < 0 || this.nodes[node.children[best]!]!.type !== DECISION) return strict ? -1 : id;
+      id = node.children[best]!;
     }
     return id;
   }
 
-  private pathKinds(nodeId: number): string[] {
-    const kinds: string[] = [];
+  private pathSteps(nodeId: number): Step[] {
+    const steps: Step[] = [];
     for (let id = nodeId; id > 0 && this.nodes[id]; id = this.nodes[id]!.parent) {
       const parent = this.nodes[this.nodes[id]!.parent]!;
-      kinds.unshift(parent.actions[this.nodes[id]!.parentAction]!.kind);
+      const action = parent.actions[this.nodes[id]!.parentAction]!;
+      steps.unshift({ kind: action.kind, to: action.to });
     }
-    return kinds;
+    return steps;
+  }
+
+  /** The decision at which a hand was actually held, or -1 if this tree does not contain it. */
+  private pinNode(pin: Pin): number {
+    return this.nodes.length ? this.findPath(pin.path.map((kind) => ({ kind })), true) : -1;
   }
 
   private go(nodeId: number): void {
@@ -405,7 +464,7 @@ export class RiverView {
       const action = parent.actions[this.nodes[id]!.parentAction]!;
       steps.unshift({ to: id, text: `${this.players[parent.player]} ${this.verb(action, parent)}` });
     }
-    replace(
+    keepFocus(this.pathEl, () => replace(
       this.pathEl,
       steps.length ? h('button', { onclick: () => this.go(0) }, 'River') : h('span.dim', 'River'),
       steps.map((step) => [
@@ -414,11 +473,11 @@ export class RiverView {
       ]),
       h('span.sep', { 'aria-hidden': 'true' }, '/'),
       h('span.now', `${this.players[node.player]} to act`),
-    );
+    ));
 
     // The actions.
     const look = drawing(node);
-    replace(
+    keepFocus(this.legendEl, () => replace(
       this.legendEl,
       look.order.map((index) => {
         const { name, size } = this.actionText(node, index);
@@ -438,10 +497,10 @@ export class RiverView {
           h('span.size', size || ' '),
         );
       }),
-    );
+    ));
 
     this.grid.marks = this.pins()
-      .filter((pin) => this.findPath(pin.path) === this.nodeId)
+      .filter((pin) => this.pinNode(pin) === this.nodeId)
       .map((pin) => {
         const [a, b] = parseCards(pin.cards) as [number, number];
         return COMBO_CLASS[comboIndex(a, b)]!;
@@ -542,7 +601,7 @@ export class RiverView {
     } else {
       replace(this.noteEl, `Solving. ${seconds(lastFrame.ms)} so far.`);
     }
-    this.statusEl.textContent = finished ? '' : this.scrub !== null ? `Iteration ${integer(frame.iteration)}` : 'Solving';
+    this.statusEl.textContent = this.problem() || (finished ? '' : this.scrub !== null ? `Iteration ${integer(frame.iteration)}` : 'Solving');
     this.updateReadout();
     if (finished) this.announce();
   }
@@ -619,7 +678,7 @@ export class RiverView {
       this.tolerance = Number(toleranceEl.value);
       this.solve();
     });
-    replace(
+    keepFocus(this.blockEl, () => replace(
       this.blockEl,
       h('dt', gloss('Pot', '底池')),
       h('dd', `${amount(this.spot.tree.pot)}${unit}`),
@@ -633,7 +692,7 @@ export class RiverView {
       h('dd', 'Discounted CFR, checked by best response'),
       h('dt', gloss('Tolerance', '公差')),
       h('dd', toleranceEl),
-    );
+    ));
   }
 
   private renderPlayed(): void {
@@ -643,14 +702,17 @@ export class RiverView {
     }
     this.playedEl.hidden = false;
     const did: Record<string, string> = { allin: 'moved all-in', fold: 'folded', call: 'called', check: 'checked', bet: 'bet', raise: 'raised' };
-    replace(
+    keepFocus(this.playedEl, () => replace(
       this.playedEl,
       this.pins().map((pin) => {
         const [a, b] = parseCards(pin.cards) as [number, number];
-        const nodeId = this.nodes.length ? this.findPath(pin.path) : -1;
+        const nodeId = this.pinNode(pin);
         const node = this.nodes[nodeId];
-        const combo = this.details.get(nodeId)?.find((d) => d.combo === comboIndex(a, b));
+        const known = this.details.get(nodeId);
+        const combo = known?.find((d) => d.combo === comboIndex(a, b));
         let answer = 'Solving';
+        if (this.nodes.length && !node) answer = 'not a line in this tree';
+        else if (known && !combo) answer = 'not in the range assumed';
         if (node && combo) {
           answer = drawing(node)
             .order.map((i) => ({ i, f: combo.strategy[i]! }))
@@ -682,7 +744,7 @@ export class RiverView {
         '; change them and it solves again.',
         h('span.zh', { lang: 'zh-Hans' }, '两人当时的范围无人知道。以上结果只在下方假设的范围下成立，改了就重解。'),
       ),
-    );
+    ));
   }
 
   // --- Every combination of the selected hand --------------------------------------
@@ -809,7 +871,7 @@ export class RiverView {
                 if (at >= 0) this.spot.board.splice(at, 1);
                 else if (this.spot.board.length < 5) this.spot.board.push(c);
                 else return;
-                this.edited('hand');
+                this.edited();
               },
             },
             card(c),
@@ -923,7 +985,6 @@ export class RiverView {
       return;
     }
     this.editorError.textContent = '';
-    const money = pot !== this.spot.tree.pot || stack !== this.spot.tree.stack;
     this.spot.tree = {
       pot,
       stack,
@@ -933,26 +994,31 @@ export class RiverView {
       allIn: value('allIn') === '1',
       allInThreshold: 0.67,
     };
-    this.edited(money ? 'hand' : 'reading');
+    this.edited();
   }
 
   /**
    * Something in the spot changed: redraw the editor and solve again shortly.
-   * New ranges or bet sizes are a different reading of the same hand; a new
-   * board or new money make it a different hand.
+   * New ranges or bet sizes are a different reading of the same hand; a
+   * different board or different money make it a different hand.
    */
-  private edited(what: 'reading' | 'hand' = 'reading'): void {
-    if (what === 'hand' && this.presetEl.value !== 'custom') {
-      this.presetEl.value = 'custom';
-      this.players = ['First player', 'Second player'];
-    }
+  private edited(): void {
+    const preset = this.preset.spot;
+    const same =
+      this.spot.board.length === 5 &&
+      this.spot.board.every((c) => preset.board.includes(c)) &&
+      this.spot.tree.pot === preset.tree.pot &&
+      this.spot.tree.stack === preset.tree.stack;
+    this.presetEl.value = same ? this.preset.id : 'custom';
+    this.players = same ? this.preset.players : ['First player', 'Second player'];
     this.drawEditor();
     clearTimeout(this.solveTimer);
-    if (this.spot.board.length !== 5) {
-      this.editorError.textContent = `Pick ${5 - this.spot.board.length} more board card${this.spot.board.length === 4 ? '' : 's'}.`;
+    const problem = this.problem();
+    this.editorError.textContent = problem;
+    if (problem) {
+      this.statusEl.textContent = problem;
       return;
     }
-    if (this.editorError.textContent?.startsWith('Pick')) this.editorError.textContent = '';
     this.solveTimer = window.setTimeout(() => this.solve(), 220);
   }
 }

@@ -1,6 +1,6 @@
 // Exact equity: one hand or range against another, every board dealt once.
 
-import { COMBO_CLASS, COMBO_COUNT, parseCards } from '../engine/cards.ts';
+import { COMBO_CLASS, COMBO_COUNT, COMBO_HI, COMBO_LO, parseCards } from '../engine/cards.ts';
 import { parseRange } from '../engine/range.ts';
 import { gloss, h, replace } from '../ui/dom.ts';
 import { frequency, integer, seconds } from '../ui/format.ts';
@@ -149,7 +149,12 @@ export class EquityView {
           }
         }
       }
-      if (!ra.some((w) => w > 0) || !rb.some((w) => w > 0)) throw new Error('Both sides need at least one hand.');
+      const onBoard = new Set(board);
+      const possible = (range: Float64Array) => {
+        for (let i = 0; i < COMBO_COUNT; i++) if (range[i]! > 0 && !onBoard.has(COMBO_HI[i]!) && !onBoard.has(COMBO_LO[i]!)) return true;
+        return false;
+      };
+      if (!possible(ra) || !possible(rb)) throw new Error('Each side needs at least one hand that does not use a board card.');
       this.ranges = request.exact ? null : [ra, rb];
       this.names[0]!.replaceChildren(exactA ? cards(exactA) : document.createTextNode(this.inputs.a.value));
       this.names[1]!.replaceChildren(exactB ? cards(exactB) : document.createTextNode(this.inputs.b.value));
@@ -288,6 +293,10 @@ export class EquityView {
   }
 
   private render(result: EquityResult): void {
+    if (Number.isNaN(result.equity[0])) {
+      this.errorEl.textContent = 'These two can never be dealt together on this board.';
+      return;
+    }
     this.last = result;
     this.drawField(result);
     result.equity.forEach((share, i) => {

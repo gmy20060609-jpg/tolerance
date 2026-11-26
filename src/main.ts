@@ -47,21 +47,29 @@ app.append(
 
 const views = new Map<string, View>();
 
+let current: (typeof routes)[number] | undefined;
+
 async function show(): Promise<void> {
-  const hash = routes.some((route) => route.hash === location.hash) ? location.hash : null;
-  // Other hashes are anchors inside the current view.
-  if (!hash && location.hash && views.size) return;
-  const route = routes.find((r) => r.hash === hash) ?? routes[0]!;
-  links.forEach((link, i) => (routes[i] === route ? link.setAttribute('aria-current', 'page') : link.removeAttribute('aria-current')));
-  let view = views.get(route.hash);
-  if (!view) {
-    view = await route.load();
-    views.set(route.hash, view);
+  // Any other hash is an anchor inside the river view.
+  const anchor = location.hash && !routes.some((r) => r.hash === location.hash) ? location.hash : '';
+  const route = routes.find((r) => r.hash === location.hash) ?? routes[0]!;
+  if (route !== current) {
+    current = route;
+    links.forEach((link, i) => (routes[i] === route ? link.setAttribute('aria-current', 'page') : link.removeAttribute('aria-current')));
+    let view = views.get(route.hash);
+    if (!view) {
+      view = await route.load();
+      views.set(route.hash, view);
+    }
+    if (current !== route) return; // another navigation won the race
+    slot.replaceChildren(view.el);
+    view.opened?.();
+    document.title = `${route.en} · Tolerance`;
+    if (!anchor) window.scrollTo(0, 0);
+  } else if (!anchor) {
+    window.scrollTo(0, 0);
   }
-  slot.replaceChildren(view.el);
-  view.opened?.();
-  window.scrollTo(0, 0);
-  document.title = `${route.en} · Tolerance`;
+  if (anchor) document.getElementById(anchor.slice(1))?.scrollIntoView();
 }
 
 window.addEventListener('hashchange', show);

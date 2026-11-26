@@ -26,8 +26,15 @@ const breathe = () =>
 let table: Promise<PreflopTable> | undefined;
 const preflopTable = () =>
   (table ??= fetch(tableUrl)
-    .then((response) => response.arrayBuffer())
-    .then(readPreflopTable));
+    .then((response) => {
+      if (!response.ok) throw new Error(`The preflop table could not be loaded (${response.status}).`);
+      return response.arrayBuffer();
+    })
+    .then(readPreflopTable)
+    .catch((error) => {
+      table = undefined; // let the next request try again
+      throw error;
+    }));
 
 // --- River ---------------------------------------------------------------------
 

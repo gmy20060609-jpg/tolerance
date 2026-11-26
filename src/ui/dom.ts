@@ -72,3 +72,17 @@ export function capture(el: Element, event: PointerEvent): void {
     // A synthetic or already released pointer cannot be captured; the drag still works inside the element.
   }
 }
+
+/**
+ * Rebuilds part of the page without dropping keyboard focus: whichever
+ * control held it gets it back, by position.
+ */
+export function keepFocus(container: Element, rebuild: () => void): void {
+  const controls = 'button, a[href], select, input, textarea';
+  const active = document.activeElement;
+  const index = active && container.contains(active) ? Array.from(container.querySelectorAll(controls)).indexOf(active) : -1;
+  rebuild();
+  if (index < 0) return;
+  const items = container.querySelectorAll<HTMLElement>(controls);
+  items[Math.min(index, items.length - 1)]?.focus();
+}

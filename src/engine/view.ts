@@ -41,7 +41,8 @@ export function gridViews(solver: Solver): (GridView | undefined)[] {
   });
   const mass = [new Float64Array(solver.hands[0].n), new Float64Array(solver.hands[1].n)];
   const classReach = new Float64Array(169);
-  const classAction = new Float64Array(169 * 8);
+  const widest = nodes.reduce((most, node) => Math.max(most, node.actions.length), 1);
+  const classAction = new Float64Array(169 * widest);
 
   const walk = (id: number, reach: [Float64Array, Float64Array]): void => {
     const node = nodes[id]!;

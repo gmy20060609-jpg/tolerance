@@ -134,6 +134,9 @@ export class PushFoldView {
     } else if (message.type === 'sweep') {
       this.solved.set(key(message.solution.stack), message.solution);
       if (message.done) this.sweepDone = true;
+    } else if (message.type === 'error') {
+      replace(this.blockEl, h('dt', 'Could not solve'), h('dd.error', `${message.message} Reload the page to try again.`));
+      return;
     } else return;
     this.loop.kick();
   }
