@@ -19,7 +19,7 @@ import { PRESETS, type Preset } from '../spots.ts';
 import { card, cards } from '../ui/cards.ts';
 import { ConvergenceChart } from '../ui/chart.ts';
 import { frameLoop, gloss, h, reducedMotion, replace } from '../ui/dom.ts';
-import { amount, frequency, integer, percent, seconds } from '../ui/format.ts';
+import { amount, frequency, integer, percent, seconds, share } from '../ui/format.ts';
 import { Grid, swatch, type GridData, type SegStyle } from '../ui/grid.ts';
 import type { Frame, Request, Response } from '../worker/protocol.ts';
 
@@ -237,6 +237,11 @@ export class RiverView {
     this.load(PRESETS[0]!);
   }
 
+  /** The hands actually held, while the spot is still the preset's hand. */
+  private pins(): Preset['pins'] {
+    return this.presetEl.value === 'custom' ? [] : this.preset.pins;
+  }
+
   // --- Solving -------------------------------------------------------------------
 
   private send(request: Request): void {
@@ -297,7 +302,7 @@ export class RiverView {
       case 'done':
         this.status = 'done';
         this.reason = message.reason;
-        for (const id of new Set([this.nodeId, ...this.preset.pins.map((pin) => this.findPath(pin.path))])) {
+        for (const id of new Set([this.nodeId, ...this.pins().map((pin) => this.findPath(pin.path))])) {
           if (this.nodes[id]?.type === DECISION) this.send({ type: 'detail', id: this.job, nodeId: id });
         }
         this.loop.kick();
@@ -393,29 +398,23 @@ export class RiverView {
   private renderNode(): void {
     const node = this.nodes[this.nodeId];
     if (!node) return;
-    // The line of play.
-    const steps: { id: number; text: string }[] = [];
+    // The line of play. Each step leads to the decision that followed it.
+    const steps: { to: number; text: string }[] = [];
     for (let id = this.nodeId; id > 0; id = this.nodes[id]!.parent) {
       const parent = this.nodes[this.nodes[id]!.parent]!;
       const action = parent.actions[this.nodes[id]!.parentAction]!;
-      steps.unshift({ id: parent.id, text: `${this.players[parent.player]} ${this.verb(action, parent)}` });
+      steps.unshift({ to: id, text: `${this.players[parent.player]} ${this.verb(action, parent)}` });
     }
     replace(
       this.pathEl,
       steps.length ? h('button', { onclick: () => this.go(0) }, 'River') : h('span.dim', 'River'),
-      steps.map((step, i) => [
+      steps.map((step) => [
         h('span.sep', { 'aria-hidden': 'true' }, '/'),
-        i === 0 ? h('span.dim', step.text) : h('button', { onclick: () => this.go(this.nodes[step.id]!.id) }, step.text),
+        step.to === this.nodeId ? h('span.dim', step.text) : h('button', { onclick: () => this.go(step.to) }, step.text),
       ]),
       h('span.sep', { 'aria-hidden': 'true' }, '/'),
       h('span.now', `${this.players[node.player]} to act`),
     );
-    // Steps before the last are reachable by clicking the action that led on from them.
-    const crumbs = this.pathEl.querySelectorAll('button');
-    steps.forEach((step, i) => {
-      const button = crumbs[i];
-      if (button && i > 0) button.onclick = () => this.go(step.id);
-    });
 
     // The actions.
     const look = drawing(node);
@@ -441,7 +440,7 @@ export class RiverView {
       }),
     );
 
-    this.grid.marks = this.preset.pins
+    this.grid.marks = this.pins()
       .filter((pin) => this.findPath(pin.path) === this.nodeId)
       .map((pin) => {
         const [a, b] = parseCards(pin.cards) as [number, number];
@@ -605,7 +604,7 @@ export class RiverView {
     replace(this.boardEl, cards(this.spot.board));
     replace(
       this.storyEl,
-      custom ? 'A spot of your own. The ranges, the board and the money are whatever you set below.' : this.preset.line,
+      custom ? 'A spot of your own: the board, the money and the ranges are whatever you set below.' : this.preset.line,
       h('span.zh', { lang: 'zh-Hans' }, custom ? '你自己设的局面。' : this.preset.lineZh),
     );
     this.renderPlayed();
@@ -627,7 +626,7 @@ export class RiverView {
       h('dt', gloss('Behind', '后手')),
       h('dd', `${amount(this.spot.tree.stack)}${unit} each`),
       h('dt', gloss('Ranges', '范围')),
-      h('dd', `${this.players[0]} ${this.hands[0]} hands, ${this.players[1]} ${this.hands[1]}`),
+      h('dd', `${this.players[0]} ${this.hands[0]} combinations, ${this.players[1]} ${this.hands[1]}`),
       h('dt', gloss('Tree', '下注树')),
       h('dd', `${decisions} decisions, ${this.nodes.length - decisions} endings`),
       h('dt', gloss('Method', '方法')),
@@ -638,7 +637,7 @@ export class RiverView {
   }
 
   private renderPlayed(): void {
-    if (this.presetEl.value === 'custom' || !this.preset.pins.length) {
+    if (!this.pins().length) {
       this.playedEl.hidden = true;
       return;
     }
@@ -646,7 +645,7 @@ export class RiverView {
     const did: Record<string, string> = { allin: 'moved all-in', fold: 'folded', call: 'called', check: 'checked', bet: 'bet', raise: 'raised' };
     replace(
       this.playedEl,
-      this.preset.pins.map((pin) => {
+      this.pins().map((pin) => {
         const [a, b] = parseCards(pin.cards) as [number, number];
         const nodeId = this.nodes.length ? this.findPath(pin.path) : -1;
         const node = this.nodes[nodeId];
@@ -736,10 +735,10 @@ export class RiverView {
                 'td',
                 { class: d.actionValues[i]! >= best - 1e-9 * pot ? 'best' : '' },
                 frequency(d.strategy[i]!, 0),
-                h('span.faint', `  ${percent(d.actionValues[i]! / pot)}`),
+                h('span.faint', `  ${share(d.actionValues[i]! / pot)}`),
               ),
             ),
-            h('td', percent(d.value / pot)),
+            h('td', share(d.value / pot)),
           );
         }),
       ),
@@ -750,7 +749,7 @@ export class RiverView {
       h(
         'p.dim',
         { style: { marginTop: '12px', maxWidth: '72ch' } },
-        'Beside each frequency is what that action is worth to the hand, as a share of the starting pot. Where a hand mixes, its actions are worth the same: that is what being indifferent means.',
+        'Beside each frequency is what that action is worth to the hand, as a share of the starting pot. Where a hand mixes, its actions are worth the same, or nearly: the gap is part of what the tolerance measures.',
       ),
     );
   }
@@ -803,7 +802,7 @@ export class RiverView {
                 if (at >= 0) this.spot.board.splice(at, 1);
                 else if (this.spot.board.length < 5) this.spot.board.push(c);
                 else return;
-                this.edited();
+                this.edited('hand');
               },
             },
             card(c),
@@ -887,13 +886,13 @@ export class RiverView {
         tone[cell] = fill[cell]! > 0 ? 2 : 0;
       }
       for (let i = 0; i < COMBO_COUNT; i++) {
-        if (!dead.has(COMBO_HI[i]!) && !dead.has(COMBO_LO[i]!)) combos += this.spot.ranges[player]![i]!;
+        if (!dead.has(COMBO_HI[i]!) && !dead.has(COMBO_LO[i]!) && this.spot.ranges[player]![i]! > 0) combos++;
       }
       this.rangeGrids[player]!.set({ k: 1, seg, fill, styles: ['grey'], tone });
       replace(
         this.rangeHeads[player]!,
         h('span', `${this.players[player]}`, h('span.zh', { lang: 'zh-Hans' }, player === 0 ? '先行动' : '后行动')),
-        h('span.dim', { style: { fontWeight: '400' } }, `${amount(Math.round(combos * 10) / 10)} hands`),
+        h('span.dim', { style: { fontWeight: '400' } }, `${combos} combinations`),
       );
     }
   }
@@ -917,6 +916,7 @@ export class RiverView {
       return;
     }
     this.editorError.textContent = '';
+    const money = pot !== this.spot.tree.pot || stack !== this.spot.tree.stack;
     this.spot.tree = {
       pot,
       stack,
@@ -926,13 +926,19 @@ export class RiverView {
       allIn: value('allIn') === '1',
       allInThreshold: 0.67,
     };
-    this.edited();
+    this.edited(money ? 'hand' : 'reading');
   }
 
-  /** Something in the spot changed: redraw the editor and solve again shortly. */
-  private edited(): void {
-    this.presetEl.value = 'custom';
-    this.players = ['First to act', 'Last to act'];
+  /**
+   * Something in the spot changed: redraw the editor and solve again shortly.
+   * New ranges or bet sizes are a different reading of the same hand; a new
+   * board or new money make it a different hand.
+   */
+  private edited(what: 'reading' | 'hand' = 'reading'): void {
+    if (what === 'hand' && this.presetEl.value !== 'custom') {
+      this.presetEl.value = 'custom';
+      this.players = ['First player', 'Second player'];
+    }
     this.drawEditor();
     clearTimeout(this.solveTimer);
     if (this.spot.board.length !== 5) {

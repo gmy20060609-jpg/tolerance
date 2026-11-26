@@ -27,6 +27,20 @@ app.append(
     h('a.by', { href: 'https://karnak.design', target: '_blank', rel: 'noopener' }, 'Karnak'),
   ),
   slot,
+  h(
+    'footer.foot',
+    h(
+      'p',
+      'Tolerance solves heads-up poker in two places: any river, and all-in-or-fold play before the flop. Every answer is stated with what a perfect opponent could still win from it.',
+      h('span.zh', { lang: 'zh-Hans' }, '公差只解单挑的两处：任意河牌，以及翻前的全下或弃牌。每个答案都附带完美对手还能多赢多少。'),
+    ),
+    h(
+      'p',
+      h('a', { href: 'https://github.com/gmy20060609-jpg/tolerance', target: '_blank', rel: 'noopener' }, 'Source and tests'),
+      ' · made by ',
+      h('a', { href: 'https://karnak.design', target: '_blank', rel: 'noopener' }, 'Karnak'),
+    ),
+  ),
 );
 
 const views = new Map<string, View>();

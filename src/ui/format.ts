@@ -30,3 +30,11 @@ export function seconds(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 }
+
+/** A value as a share of the pot, two decimals, with a true minus sign. */
+export function share(value: number): string {
+  if (!Number.isFinite(value)) return '–';
+  const text = (value * 100).toFixed(2);
+  if (Number(text) === 0) return '0.00%';
+  return `${text.replace('-', '−')}%`;
+}

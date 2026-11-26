@@ -7,7 +7,7 @@ import { solvePushFold } from '../src/engine/pushfold.ts';
 import { riverSolver } from '../src/engine/river.ts';
 import { kuhnSolver } from '../src/proof/kuhn.ts';
 import { CALLER, PUSHER, readChart } from '../src/proof/hune.ts';
-import { dryRiver, fullRanges, wetRiver } from '../src/spots.ts';
+import { dryRiver, fullRanges, moneymakerFarha, wetRiver } from '../src/spots.ts';
 import { preflopTable } from '../test/table.ts';
 
 const line = (text = '') => console.log(text);
@@ -74,6 +74,7 @@ for (const stack of [5, 10, 15, 20, 25]) {
 line();
 line('River spots. Exploitability as a share of the pot, time excludes measuring it');
 const spots = [
+  ['9s 2d 6s 8s 3h, the 2003 hand: 1.81 million in the pot, 2.795 million behind', moneymakerFarha],
   ['Ks 8h 5d 2c Jd, 5.5 bb pot, 97.5 bb behind, 3 bet sizes, 2 raise sizes', dryRiver],
   ['Qh Ts 7h 4d 2h, 40 bb pot, 80 bb behind, 2 bet sizes, 1 raise size', wetRiver],
   ['Ks 8h 5d 2c Jd, every hand for both players', fullRanges],

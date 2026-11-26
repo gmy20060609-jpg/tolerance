@@ -469,6 +469,18 @@ h2 .zh {
   display: grid;
   gap: 20px;
   align-content: start;
+  container-type: inline-size;
+}
+
+@container (max-width: 640px) {
+  .result {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .result .caption {
+    max-width: none;
+  }
 }
 
 .spot-head {
@@ -486,6 +498,11 @@ h2 .zh {
   border-bottom: 0;
   padding: 4px 20px 4px 0;
   text-overflow: ellipsis;
+}
+
+.spot-head .zh {
+  white-space: nowrap;
+  margin: 0;
 }
 
 .spot-pick:hover {
@@ -767,12 +784,21 @@ h2 .zh {
 
 .foot {
   border-top: 1px solid var(--ink);
-  padding: 20px var(--pad) 28px;
+  padding: 20px var(--pad) 32px;
   display: flex;
   flex-wrap: wrap;
   gap: 8px 40px;
   justify-content: space-between;
   color: var(--ink-2);
+}
+
+.foot p:first-child {
+  max-width: 78ch;
+}
+
+.foot .zh {
+  display: block;
+  margin: 2px 0 0;
 }
 
 /* --- Narrow screens ------------------------------------------------------ */
@@ -849,6 +875,7 @@ h2 .zh {
 
   .side {
     display: contents;
+    container-type: normal;
   }
 
   .river > .stage {

@@ -1,18 +1,24 @@
 {
-  "name": "solver-wip",
+  "name": "tolerance",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "report": "node scripts/report.ts",
     "table": "node scripts/preflop-table.ts"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.70.2",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "vite": "^8.3.8",
-    "vitest": "^5.1.2"
-  }
+    "vitest": "^5.1.2",
+    "wrangler": "^4.168.0"
+  },
+  "description": "A heads-up poker solver that states its error."
 }

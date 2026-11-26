@@ -188,9 +188,9 @@ export class ConvergenceChart {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle = RED;
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText(`Tolerance ${percent(this.tolerance, 1)}`, this.right, ty - 5 * dpr);
+    ctx.fillText(`Tolerance ${percent(this.tolerance, 1)}`, this.left + 8 * dpr, ty - 5 * dpr);
 
     if (points.length < 1) return;
     const path = (from: number, to: number, color: string) => {
