@@ -19,6 +19,36 @@ const routes: { hash: string; en: string; zh: string; load: () => Promise<View> 
 ];
 
 const app = document.getElementById('app')!;
+
+// The Chinese gloss beside the English can be switched off; it starts on for readers whose browser asks for Chinese.
+const root = document.documentElement;
+const remembered = (() => {
+  try {
+    return localStorage.getItem('gloss');
+  } catch {
+    return null;
+  }
+})();
+root.dataset.gloss = remembered ?? (navigator.language.toLowerCase().startsWith('zh') ? 'on' : 'off');
+const glossButton = h(
+  'button.gloss',
+  {
+    'aria-pressed': String(root.dataset.gloss === 'on'),
+    title: 'Show or hide the Chinese beside the English',
+    onclick: () => {
+      const on = root.dataset.gloss !== 'on';
+      root.dataset.gloss = on ? 'on' : 'off';
+      glossButton.setAttribute('aria-pressed', String(on));
+      try {
+        localStorage.setItem('gloss', on ? 'on' : 'off');
+      } catch {
+        // Private browsing: the choice lasts for this visit.
+      }
+      window.dispatchEvent(new Event('resize'));
+    },
+  },
+  '中文',
+);
 const slot = h('div.slot');
 const links = routes.map((route) => (route.hash ? h('a', { href: route.hash }, gloss(route.en, route.zh)) : null));
 
@@ -27,6 +57,7 @@ app.append(
     'header.top',
     h('a.mark', { href: '#', 'aria-label': 'Tolerance, front page' }, gloss('Tolerance', '公差')),
     h('nav.nav', { 'aria-label': 'Tools' }, links),
+    glossButton,
     h('a.by', { href: 'https://karnak.design', target: '_blank', rel: 'noopener' }, 'Karnak'),
   ),
   slot,
