@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "report": "node scripts/report.ts",
+    "table": "node scripts/preflop-table.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

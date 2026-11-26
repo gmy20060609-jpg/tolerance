@@ -173,6 +173,15 @@ export class BoardState {
     for (let i = 0; i < cards.length; i++) this.add(cards[i]!);
   }
 
+  copyFrom(other: BoardState): void {
+    this.suitsLo = other.suitsLo;
+    this.suitsHi = other.suitsHi;
+    this.any = other.any;
+    this.two = other.two;
+    this.three = other.three;
+    this.four = other.four;
+  }
+
   add(card: number): void {
     const bit = 1 << (card >> 2);
     const suit = card & 3;
