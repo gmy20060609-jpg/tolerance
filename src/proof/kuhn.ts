@@ -7,8 +7,8 @@
 // A hand here is one card. The solver expects two card ids per hand, so each
 // hand also gets a private filler id that no other hand uses.
 
-import { Solver, type HandSet } from '../src/engine/solver.ts';
-import { buildTree } from '../src/engine/tree.ts';
+import { Solver, type HandSet } from '../engine/solver.ts';
+import { buildTree } from '../engine/tree.ts';
 
 function oneCardHands(fillerBase: number): HandSet {
   return {

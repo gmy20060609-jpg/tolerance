@@ -2,8 +2,8 @@
 // pair of hands at every terminal node, so it shares none of the sorting and
 // card-sum shortcuts the solver uses. The tests require both to agree.
 
-import type { Solver } from '../src/engine/solver.ts';
-import { DECISION, FOLD } from '../src/engine/tree.ts';
+import type { Solver } from '../engine/solver.ts';
+import { DECISION, FOLD } from '../engine/tree.ts';
 
 function conflict(solver: Solver, player: number, h: number, k: number): boolean {
   const mine = solver.hands[player]!;

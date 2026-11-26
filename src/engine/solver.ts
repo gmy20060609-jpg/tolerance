@@ -127,7 +127,7 @@ export class Solver {
   // --- Terminal evaluation ---------------------------------------------------
 
   /** For each hand of `player`, the opponent weight it can actually face. */
-  private reachableMass(player: number, oppReach: Float64Array, out: Float64Array): void {
+  reachableMass(player: number, oppReach: Float64Array, out: Float64Array): void {
     const mine = this.hands[player]!;
     const theirs = this.hands[1 - player]!;
     const twin = this.twin[player]!;
@@ -451,5 +451,38 @@ export class Solver {
       for (let h = 0; h < n; h++) r[h]! *= average[base + h]!;
     }
     return reach;
+  }
+
+  /**
+   * Everything about one decision node under the average strategies: both
+   * players' reach, the acting player's strategy, and what each action is
+   * worth to each hand in chips (the hand's share of the starting pot plus
+   * what it wins or loses on this street).
+   */
+  nodeDetail(nodeId: number): {
+    player: number;
+    reach: [Float64Array, Float64Array];
+    /** For each hand of the acting player, the opponent weight it can face here. */
+    facing: Float64Array;
+    strategy: Float64Array;
+    actionValues: Float64Array;
+  } {
+    const node = this.nodes[nodeId]!;
+    if (node.type !== DECISION) throw new Error('Not a decision node');
+    const player = node.player;
+    const n = this.hands[player]!.n;
+    const actions = node.actions.length;
+    const reach = this.reachAt(nodeId);
+    const oppReach = reach[1 - player]!;
+    const facing = new Float64Array(n);
+    this.reachableMass(player, oppReach, facing);
+    const strategy = this.averageStrategy(nodeId);
+    const actionValues = new Float64Array(actions * n);
+    const half = this.tree.config.pot / 2;
+    for (let a = 0; a < actions; a++) {
+      const value = this.evaluate(node.children[a]!, player, oppReach, false);
+      for (let h = 0; h < n; h++) actionValues[a * n + h] = facing[h]! > 0 ? value[h]! / facing[h]! + half : NaN;
+    }
+    return { player, reach, facing, strategy, actionValues };
   }
 }

@@ -5,9 +5,9 @@ import os from 'node:os';
 import { CLASS_NAMES } from '../src/engine/cards.ts';
 import { solvePushFold } from '../src/engine/pushfold.ts';
 import { riverSolver } from '../src/engine/river.ts';
-import { kuhnSolver } from '../test/kuhn.ts';
-import { CALLER, PUSHER, readChart } from '../test/reference/hune.ts';
-import { dryRiver, fullRanges, wetRiver } from '../test/spots.ts';
+import { kuhnSolver } from '../src/proof/kuhn.ts';
+import { CALLER, PUSHER, readChart } from '../src/proof/hune.ts';
+import { dryRiver, fullRanges, wetRiver } from '../src/spots.ts';
 import { preflopTable } from '../test/table.ts';
 
 const line = (text = '') => console.log(text);

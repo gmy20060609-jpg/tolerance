@@ -4,8 +4,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { riverSolver } from '../src/engine/river.ts';
-import { referenceExploitability } from './reference.ts';
-import { dryRiver, wetRiver } from './spots.ts';
+import { referenceExploitability } from '../src/proof/pairwise.ts';
+import { dryRiver, wetRiver } from '../src/spots.ts';
 
 describe.each([
   { name: 'dry river, deep stacks', spot: dryRiver },

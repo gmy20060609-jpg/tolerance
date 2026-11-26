@@ -2,7 +2,7 @@
 // an ante per hand, and the second player's equilibrium strategy is unique.
 
 import { describe, expect, it } from 'vitest';
-import { kuhnSolver } from './kuhn.ts';
+import { kuhnSolver } from '../src/proof/kuhn.ts';
 
 describe('Kuhn poker', () => {
   const solver = kuhnSolver();
