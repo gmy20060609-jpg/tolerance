@@ -13,7 +13,7 @@ import {
   parseCards,
 } from '../engine/cards.ts';
 import { parseRange, setClass } from '../engine/range.ts';
-import { DECISION, type Action, type TreeConfig, type TreeNode } from '../engine/tree.ts';
+import { CHANCE, DECISION, type Action, type TreeConfig, type TreeNode } from '../engine/tree.ts';
 import type { ComboDetail } from '../engine/view.ts';
 import { PRESETS, type Pin, type Preset } from '../spots.ts';
 import { card, cards } from '../ui/cards.ts';
@@ -23,9 +23,10 @@ import { amount, frequency, integer, percent, seconds, share } from '../ui/forma
 import { Grid, swatch, type GridData, type SegStyle } from '../ui/grid.ts';
 import type { Frame, Request, Response } from '../worker/protocol.ts';
 
-const TOLERANCES = [0.01, 0.005, 0.001, 0.0005, 0.0001];
+const TOLERANCES = [0.01, 0.005, 0.003, 0.001, 0.0005, 0.0001];
 const PLAYBACK = 42; // frames shown per second while a solve is replayed
 const MAX_ITERATIONS = 6000;
+const MAX_ITERATIONS_TURN = 400;
 
 /** One step of a line of play: a kind of action and, if it matters, its size. */
 interface Step {
@@ -107,7 +108,11 @@ export class RiverView {
   private wantPath: Step[] | null = null;
   private selected = -1;
   private details = new Map<number, ComboDetail[]>();
+  /** Pictures of nodes that come after a river card: asked for one at a time, not streamed. */
+  private views = new Map<number, { iteration: number; freq: Uint8Array; fill: Uint8Array; overall: Float32Array }>();
   private solveTimer = 0;
+  /** The chance node whose river is being chosen, or -1. */
+  private dealing = -1;
 
   private readonly grid = new Grid('Strategy for each of the 169 starting hands. Arrow keys move, Enter selects.');
   private readonly chart = new ConvergenceChart();
@@ -117,6 +122,7 @@ export class RiverView {
   private readonly pathEl = h('nav.path', { 'aria-label': 'Line of play' });
   private readonly readoutEl = h('div.readout', { 'aria-live': 'off' });
   private readonly legendEl = h('div.legend');
+  private readonly dealEl = h('div.deal');
   private readonly titleEl = h('span.zh', { lang: 'zh-Hans' });
   private readonly presetEl = h('select.field.spot-pick', { 'aria-label': 'Spot' }) as HTMLSelectElement;
   private readonly boardEl = h('div.board');
@@ -170,6 +176,7 @@ export class RiverView {
       this.grid.el,
       this.readoutEl,
       this.legendEl,
+      this.dealEl,
       this.srTable,
     );
 
@@ -262,7 +269,7 @@ export class RiverView {
     this.preset = preset;
     this.players = preset.players;
     this.spot = cloneSpot(preset);
-    this.tolerance = preset.id === 'moneymaker-farha' ? 0.0001 : 0.001;
+    this.tolerance = preset.tolerance;
     this.presetEl.value = preset.id;
     this.wantPath = (preset.pins[0]?.path ?? []).map((kind) => ({ kind }));
     this.selected = -1;
@@ -273,7 +280,7 @@ export class RiverView {
 
   /** Why the spot cannot be solved as it stands, or an empty string. */
   private problem(): string {
-    if (this.spot.board.length !== 5) return `Pick ${5 - this.spot.board.length} more board card${this.spot.board.length === 4 ? '' : 's'}.`;
+    if (this.spot.board.length < 4) return 'Pick at least four board cards: four for a turn, five for a river.';
     const dead = new Set(this.spot.board);
     for (let player = 0; player < 2; player++) {
       let any = false;
@@ -298,6 +305,7 @@ export class RiverView {
     this.job++;
     this.frames = [];
     this.details.clear();
+    this.views.clear();
     this.status = 'solving';
     this.playhead = 0;
     this.lastTick = 0;
@@ -305,14 +313,20 @@ export class RiverView {
     this.shown = -1;
     this.statusEl.textContent = 'Solving';
     this.renderSpot();
+    // A turn carries 48 rivers with it, so it is kept to one bet size and one raise a street.
+    const turn = this.spot.board.length === 4;
+    const t = this.spot.tree;
+    const tree: TreeConfig = turn
+      ? { ...t, bets: [t.bets[0].slice(0, 1), t.bets[1].slice(0, 1)], raises: [t.raises[0].slice(0, 1), t.raises[1].slice(0, 1)], maxRaises: Math.min(1, t.maxRaises), allIn: false }
+      : t;
     this.send({
       type: 'river',
       id: this.job,
       board: this.spot.board,
       ranges: this.spot.ranges,
-      tree: this.spot.tree,
+      tree,
       tolerance: this.tolerance,
-      maxIterations: MAX_ITERATIONS,
+      maxIterations: turn ? MAX_ITERATIONS_TURN : MAX_ITERATIONS,
     });
   }
 
@@ -334,7 +348,15 @@ export class RiverView {
       }
       case 'frame':
         this.frames.push(message);
+        if (this.offsets[this.nodeId]! < 0 && this.frames.length % 5 === 0) this.send({ type: 'view', id: this.job, nodeId: this.nodeId });
         this.loop.kick();
+        break;
+      case 'view':
+        this.views.set(message.nodeId, message);
+        if (message.nodeId === this.nodeId) {
+          this.shown = -1;
+          this.loop.kick();
+        }
         break;
       case 'done':
         this.status = 'done';
@@ -342,6 +364,7 @@ export class RiverView {
         for (const id of new Set([this.nodeId, ...this.pins().map((pin) => this.pinNode(pin))])) {
           if (this.nodes[id]?.type === DECISION) this.send({ type: 'detail', id: this.job, nodeId: id });
         }
+        if (this.offsets[this.nodeId]! < 0) this.send({ type: 'view', id: this.job, nodeId: this.nodeId });
         this.shown = -1; // draw the last frame again, now as the finished one
         this.loop.kick();
         break;
@@ -368,33 +391,56 @@ export class RiverView {
   /**
    * The node reached by a line of play. Each step names a kind of action and,
    * where a node offers several of that kind, the size closest to the one
-   * wanted. Returns -1 if the line cannot be followed to the end, or, when
-   * `strict` is false, the last decision it reaches.
+   * wanted; a 'deal' step names the card that comes. Returns -1 if the line
+   * cannot be followed to the end, or, when `strict` is false, the last
+   * decision it reaches.
    */
   private findPath(steps: Step[], strict: boolean): number {
     let id = 0;
-    for (const step of steps) {
+    let reached = 0;
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i]!;
       const node = this.nodes[id];
       if (!node) return strict ? -1 : 0;
-      let best = -1;
-      node.actions.forEach((action, index) => {
-        if (action.kind !== step.kind) return;
-        if (best < 0 || (step.to !== undefined && Math.abs(action.to - step.to) < Math.abs(node.actions[best]!.to - step.to))) best = index;
-      });
-      if (best < 0 || this.nodes[node.children[best]!]!.type !== DECISION) return strict ? -1 : id;
-      id = node.children[best]!;
+      let next = -1;
+      if (node.type === CHANCE) {
+        const at = step.kind === 'deal' ? node.cards!.indexOf(step.to ?? -1) : -1;
+        if (at >= 0) next = node.children[at]!;
+      } else {
+        let best = -1;
+        node.actions.forEach((action, index) => {
+          if (action.kind !== step.kind) return;
+          if (best < 0 || (step.to !== undefined && Math.abs(action.to - step.to) < Math.abs(node.actions[best]!.to - step.to))) best = index;
+        });
+        if (best >= 0) next = node.children[best]!;
+      }
+      const child = this.nodes[next];
+      const passes = child && (child.type === DECISION || (child.type === CHANCE && steps[i + 1]?.kind === 'deal'));
+      if (!passes) return strict ? -1 : reached;
+      id = next;
+      if (child.type === DECISION) reached = id;
     }
-    return id;
+    return this.nodes[id]?.type === DECISION ? id : strict ? -1 : reached;
   }
 
   private pathSteps(nodeId: number): Step[] {
     const steps: Step[] = [];
     for (let id = nodeId; id > 0 && this.nodes[id]; id = this.nodes[id]!.parent) {
       const parent = this.nodes[this.nodes[id]!.parent]!;
-      const action = parent.actions[this.nodes[id]!.parentAction]!;
-      steps.unshift({ kind: action.kind, to: action.to });
+      const index = this.nodes[id]!.parentAction;
+      if (parent.type === CHANCE) steps.unshift({ kind: 'deal', to: parent.cards![index]! });
+      else steps.unshift({ kind: parent.actions[index]!.kind, to: parent.actions[index]!.to });
     }
     return steps;
+  }
+
+  /** The chance node a node sits under, with the card dealt there, if any. */
+  private dealAbove(nodeId: number): { chance: TreeNode; card: number } | null {
+    for (let id = nodeId; id > 0 && this.nodes[id]; id = this.nodes[id]!.parent) {
+      const parent = this.nodes[this.nodes[id]!.parent]!;
+      if (parent.type === CHANCE) return { chance: parent, card: parent.cards![this.nodes[id]!.parentAction]! };
+    }
+    return null;
   }
 
   /** The decision at which a hand was actually held, or -1 if this tree does not contain it. */
@@ -408,6 +454,8 @@ export class RiverView {
     this.selected = -1;
     this.grid.selected = -1;
     if (this.status === 'done' && !this.details.has(nodeId)) this.send({ type: 'detail', id: this.job, nodeId });
+    if (this.offsets[nodeId]! < 0 && !this.views.has(nodeId)) this.send({ type: 'view', id: this.job, nodeId });
+    this.dealing = -1;
     this.renderNode();
     this.shown = -1;
     this.loop.kick();
@@ -416,7 +464,7 @@ export class RiverView {
 
   private actionText(node: TreeNode, index: number): { name: string; size: string } {
     const action = node.actions[index]!;
-    const { pot } = this.spot.tree;
+    const pot = node.streetPot;
     const me = node.commit[node.player]!;
     const them = node.commit[1 - node.player]!;
     const unit = this.preset.unit === 'bb' ? ' bb' : '';
@@ -458,38 +506,48 @@ export class RiverView {
     const node = this.nodes[this.nodeId];
     if (!node) return;
     // The line of play. Each step leads to the decision that followed it.
-    const steps: { to: number; text: string }[] = [];
+    const first = this.spot.board.length === 4 ? 'Turn' : 'River';
+    const steps: { to: number; text: (string | HTMLElement)[] }[] = [];
     for (let id = this.nodeId; id > 0; id = this.nodes[id]!.parent) {
       const parent = this.nodes[this.nodes[id]!.parent]!;
-      const action = parent.actions[this.nodes[id]!.parentAction]!;
-      steps.unshift({ to: id, text: `${this.players[parent.player]} ${this.verb(action, parent)}` });
+      const index = this.nodes[id]!.parentAction;
+      if (parent.type === CHANCE) steps.unshift({ to: id, text: ['river ', card(parent.cards![index]!)] });
+      else if (this.nodes[id]!.type === DECISION) steps.unshift({ to: id, text: [`${this.players[parent.player]} ${this.verb(parent.actions[index]!, parent)}`] });
+      else steps.unshift({ to: -1, text: [`${this.players[parent.player]} ${this.verb(parent.actions[index]!, parent)}`] });
     }
     keepFocus(this.pathEl, () => replace(
       this.pathEl,
-      steps.length ? h('button', { onclick: () => this.go(0) }, 'River') : h('span.dim', 'River'),
+      steps.length ? h('button', { onclick: () => this.go(0) }, first) : h('span.dim', first),
       steps.map((step) => [
         h('span.sep', { 'aria-hidden': 'true' }, '/'),
-        step.to === this.nodeId ? h('span.dim', step.text) : h('button', { onclick: () => this.go(step.to) }, step.text),
+        step.to < 0 || step.to === this.nodeId ? h('span.dim', step.text) : h('button', { onclick: () => this.go(step.to) }, step.text),
       ]),
       h('span.sep', { 'aria-hidden': 'true' }, '/'),
       h('span.now', `${this.players[node.player]} to act`),
     ));
 
-    // The actions.
+    // The actions. One that ends the turn leads on to the choice of a river card.
     const look = drawing(node);
     keepFocus(this.legendEl, () => replace(
       this.legendEl,
       look.order.map((index) => {
         const { name, size } = this.actionText(node, index);
         const child = this.nodes[node.children[index]!]!;
-        const goes = child.type === DECISION;
+        const deals = child.type === CHANCE && this.nodes[child.children[0]!]!.type === DECISION;
+        const goes = child.type === DECISION || deals;
         return h(
           'button',
           {
             'data-go': String(goes),
             'data-action': String(index),
-            title: goes ? `See how ${this.players[child.player]} answers` : undefined,
-            onclick: () => goes && this.go(child.id),
+            'aria-expanded': deals ? String(this.dealing === child.id) : undefined,
+            title: deals ? 'Deal a river card and see what follows' : goes ? `See how ${this.players[child.player]} answers` : undefined,
+            onclick: () => {
+              if (deals) {
+                this.dealing = this.dealing === child.id ? -1 : child.id;
+                this.renderNode();
+              } else if (goes) this.go(child.id);
+            },
           },
           swatch(look.byAction[index]!),
           h('span.name', name, goes ? ' →' : ''),
@@ -498,6 +556,8 @@ export class RiverView {
         );
       }),
     ));
+    this.renderDeal();
+    this.renderBoard();
 
     this.grid.marks = this.pins()
       .filter((pin) => this.pinNode(pin) === this.nodeId)
@@ -505,6 +565,81 @@ export class RiverView {
         const [a, b] = parseCards(pin.cards) as [number, number];
         return COMBO_CLASS[comboIndex(a, b)]!;
       });
+  }
+
+  /**
+   * The river cards. Shown while one is being chosen after a line that ends
+   * the turn, and under any river decision, to change the card in place.
+   */
+  private renderDeal(): void {
+    const above = this.dealAbove(this.nodeId);
+    const chance = this.dealing >= 0 ? this.nodes[this.dealing] : above?.chance;
+    if (!chance || chance.type !== CHANCE) {
+      this.dealEl.hidden = true;
+      return;
+    }
+    this.dealEl.hidden = false;
+    const current = this.dealing >= 0 ? -1 : (above?.card ?? -1);
+    // Changing the card keeps the line of play: the same actions, on the new river.
+    const tail = this.dealing >= 0 ? [] : this.pathSteps(this.nodeId).slice(this.pathSteps(above!.chance.children[above!.chance.cards!.indexOf(above!.card)]!).length);
+    const deck = h('div.deck', { role: 'group', 'aria-label': 'River card' });
+    for (let suit = 3; suit >= 0; suit--) {
+      for (let rank = 12; rank >= 0; rank--) {
+        const c = makeCard(rank, suit);
+        const at = chance.cards!.indexOf(c);
+        deck.append(
+          h(
+            'button',
+            {
+              disabled: at < 0,
+              'aria-pressed': String(c === current),
+              'aria-label': `${RANK_CHARS[rank]}${SUIT_CHARS[suit]}`,
+              onclick: () => {
+                const root = chance.children[at]!;
+                const target = this.findPath([...this.pathSteps(root), ...tail], false);
+                this.go(this.nodes[target]?.street === this.nodes[root]!.street ? target : root);
+              },
+            },
+            at < 0 ? '' : card(c),
+          ),
+        );
+      }
+    }
+    keepFocus(this.dealEl, () => replace(
+      this.dealEl,
+      h('div.sub', gloss(current >= 0 ? 'The river' : 'Deal the river', '发河牌'), h('span.dim', { style: { fontWeight: '400' } }, 'any of the 48 cards left')),
+      deck,
+    ));
+  }
+
+  private renderBoard(): void {
+    const above = this.dealAbove(this.nodeId);
+    replace(this.boardEl, cards(this.spot.board), above ? h('span.dealt', card(above.card)) : null);
+  }
+
+  /** What is drawn for the current node at a frame: frequencies, bar heights, totals. */
+  private slice(index: number): { freq: Uint8Array; fill: Uint8Array; overall: Float32Array; before: Uint8Array; settled: boolean; streamed: boolean } | null {
+    const node = this.nodes[this.nodeId];
+    const frame = this.frames[index];
+    if (!node || !frame) return null;
+    const actions = node.actions.length;
+    const done = this.status === 'done';
+    const start = this.offsets[this.nodeId]!;
+    if (start >= 0) {
+      const at = this.overallOffsets[this.nodeId]!;
+      const before = this.frames[Math.max(0, index - 4)]!;
+      return {
+        freq: frame.data.subarray(start, start + 169 * actions),
+        fill: frame.data.subarray(start + 169 * actions, start + 169 * actions + 169),
+        overall: frame.overall.subarray(at, at + actions),
+        before: before.data.subarray(start, start + 169 * actions),
+        settled: (done && index === this.frames.length - 1) || false,
+        streamed: true,
+      };
+    }
+    const view = this.views.get(this.nodeId);
+    if (!view) return null;
+    return { freq: view.freq, fill: view.fill, overall: view.overall, before: view.freq, settled: done, streamed: false };
   }
 
   // --- Drawing a frame -----------------------------------------------------------
@@ -530,28 +665,25 @@ export class RiverView {
 
   private gridData(index: number): GridData | null {
     const node = this.nodes[this.nodeId];
-    const frame = this.frames[index];
-    if (!node || !frame || this.offsets[this.nodeId]! < 0) return null;
+    const part = this.slice(index);
+    if (!node || !part) return null;
     const actions = node.actions.length;
-    const start = this.offsets[this.nodeId]!;
     const look = drawing(node);
     const seg = new Float32Array(169 * actions);
     const fill = new Float32Array(169);
     const tone = new Uint8Array(169);
-    const before = this.frames[Math.max(0, index - 4)]!;
-    const settledAll = this.status === 'done' && index === this.frames.length - 1;
     for (let c = 0; c < 169; c++) {
-      const f = frame.data[start + 169 * actions + c]!;
+      const f = part.fill[c]!;
       if (!f) continue;
       fill[c] = f / 255;
       let moved = 0;
       for (let i = 0; i < actions; i++) {
         const a = look.order[i]!;
-        const v = frame.data[start + c * actions + a]!;
+        const v = part.freq[c * actions + a]!;
         seg[c * actions + i] = v / 255;
-        moved = Math.max(moved, Math.abs(v - before.data[start + c * actions + a]!));
+        moved = Math.max(moved, Math.abs(v - part.before[c * actions + a]!));
       }
-      tone[c] = settledAll || (index >= 4 && moved <= 3) ? 2 : 1;
+      tone[c] = part.settled || (part.streamed && index >= 4 && moved <= 3) ? 2 : 1;
     }
     return { k: actions, seg, fill, styles: look.styles, tone };
   }
@@ -559,7 +691,7 @@ export class RiverView {
   private render(index: number): void {
     const frame = this.frames[index]!;
     const data = this.gridData(index);
-    if (data) this.grid.set(data);
+    this.grid.set(data ?? { k: 1, seg: new Float32Array(169), fill: new Float32Array(169), styles: ['none'], tone: new Uint8Array(169) });
     const lastFrame = this.frames[this.frames.length - 1]!;
     const atEnd = index === this.frames.length - 1;
     const finished = this.status === 'done' && atEnd;
@@ -577,14 +709,11 @@ export class RiverView {
       : `At iteration ${integer(frame.iteration)}, exploitable for`;
 
     // The legend's figures.
-    const node = this.nodes[this.nodeId];
-    if (node) {
-      const at = this.overallOffsets[this.nodeId]!;
-      this.legendEl.querySelectorAll<HTMLElement>('button').forEach((button) => {
-        const action = Number(button.dataset.action);
-        button.querySelector('.share')!.textContent = frequency(frame.overall[at + action]!);
-      });
-    }
+    const part = this.slice(index);
+    this.legendEl.querySelectorAll<HTMLElement>('button').forEach((button) => {
+      const action = Number(button.dataset.action);
+      button.querySelector('.share')!.textContent = part ? frequency(part.overall[action]!) : '–';
+    });
 
     if (this.status === 'done') {
       const how =
@@ -608,38 +737,38 @@ export class RiverView {
 
   private updateReadout(): void {
     const node = this.nodes[this.nodeId];
-    const frame = this.frames[this.shown];
+    const part = this.shown >= 0 ? this.slice(this.shown) : null;
     const cell = this.grid.hover >= 0 ? this.grid.hover : this.selected;
-    if (!node || !frame) return;
+    if (!node) return;
+    if (!part) {
+      replace(this.readoutEl, h('span.what', `${this.players[node.player]}, hand by hand`), h('span.dim', 'Reading this river'));
+      return;
+    }
     const actions = node.actions.length;
-    const start = this.offsets[this.nodeId]!;
     if (cell < 0) {
       let inPlay = 0;
       let settled = 0;
-      const before = this.frames[Math.max(0, this.shown - 4)]!;
-      const done = this.status === 'done' && this.shown === this.frames.length - 1;
       for (let c = 0; c < 169; c++) {
-        if (!frame.data[start + 169 * actions + c]) continue;
+        if (!part.fill[c]) continue;
         inPlay++;
         let moved = 0;
-        for (let a = 0; a < actions; a++) moved = Math.max(moved, Math.abs(frame.data[start + c * actions + a]! - before.data[start + c * actions + a]!));
-        if (done || (this.shown >= 4 && moved <= 3)) settled++;
+        for (let a = 0; a < actions; a++) moved = Math.max(moved, Math.abs(part.freq[c * actions + a]! - part.before[c * actions + a]!));
+        if (part.settled || (part.streamed && this.shown >= 4 && moved <= 3)) settled++;
       }
       replace(
         this.readoutEl,
         h('span.what', `${this.players[node.player]}, hand by hand`),
-        h('span.dim', `${settled} of ${inPlay} hands settled`),
+        h('span.dim', part.streamed || part.settled ? `${settled} of ${inPlay} hands settled` : 'Still solving: this river updates as it goes'),
       );
       return;
     }
-    const fill = frame.data[start + 169 * actions + cell]!;
-    if (!fill) {
+    if (!part.fill[cell]) {
       replace(this.readoutEl, h('span.what', h('b', CLASS_NAMES[cell]!), ' is not in the range here'), h('span'));
       return;
     }
     const look = drawing(node);
     const parts = look.order
-      .map((a) => ({ a, f: frame.data[start + cell * actions + a]! / 255 }))
+      .map((a) => ({ a, f: part.freq[cell * actions + a]! / 255 }))
       .filter((p) => p.f >= 0.005)
       .map((p) => `${this.actionText(node, p.a).name} ${frequency(p.f, 0)}`);
     replace(this.readoutEl, h('span.what', h('b', CLASS_NAMES[cell]!), '  ', parts.join(', ')), h('span.dim', 'Select for every combination'));
@@ -649,9 +778,9 @@ export class RiverView {
   private announce(): void {
     const node = this.nodes[this.nodeId];
     const frame = this.frames[this.frames.length - 1];
-    if (!node || !frame) return;
-    const at = this.overallOffsets[this.nodeId]!;
-    const parts = node.actions.map((_, i) => `${this.actionText(node, i).name} ${frequency(frame.overall[at + i]!)}`);
+    const part = this.slice(this.frames.length - 1);
+    if (!node || !frame || !part) return;
+    const parts = node.actions.map((_, i) => `${this.actionText(node, i).name} ${frequency(part.overall[i]!)}`);
     this.srTable.textContent = `Solved. Exploitable for ${percent(frame.exploitability)} of the pot. ${this.players[node.player]}: ${parts.join(', ')}.`;
   }
 
@@ -660,7 +789,7 @@ export class RiverView {
   private renderSpot(): void {
     const custom = this.presetEl.value === 'custom';
     this.titleEl.textContent = custom ? '你自己的局面' : this.preset.titleZh;
-    replace(this.boardEl, cards(this.spot.board));
+    this.renderBoard();
     replace(
       this.storyEl,
       custom ? 'A spot of your own: the board, the money and the ranges are whatever you set below.' : this.preset.line,
@@ -672,6 +801,8 @@ export class RiverView {
   private renderBlock(): void {
     const unit = this.preset.unit === 'bb' ? ' bb' : '';
     const decisions = this.nodes.filter((node) => node.type === DECISION).length;
+    const turn = this.spot.board.length === 4;
+    const onTurn = this.nodes.filter((node) => node.type === DECISION && node.street === 0).length;
     const toleranceEl = h('select.field', { 'aria-label': 'Tolerance', style: { width: 'auto', padding: '0 18px 0 0', border: '0' } }) as HTMLSelectElement;
     for (const t of TOLERANCES) toleranceEl.append(h('option', { value: String(t), selected: t === this.tolerance }, `${percent(t, 1)} of the pot`));
     toleranceEl.addEventListener('change', () => {
@@ -687,7 +818,12 @@ export class RiverView {
       h('dt', gloss('Ranges', '范围')),
       h('dd', `${this.players[0]} ${this.hands[0]} combinations, ${this.players[1]} ${this.hands[1]}`),
       h('dt', gloss('Tree', '下注树')),
-      h('dd', `${decisions} decisions, ${this.nodes.length - decisions} endings`),
+      h(
+        'dd',
+        turn
+          ? `${onTurn} decisions on the turn, ${integer(decisions)} with all 48 rivers; one bet size and one raise a street`
+          : `${decisions} decisions, ${this.nodes.length - decisions} endings`,
+      ),
       h('dt', gloss('Method', '方法')),
       h('dd', 'Discounted CFR, checked by best response'),
       h('dt', gloss('Tolerance', '公差')),
@@ -901,7 +1037,7 @@ export class RiverView {
       rangeColumn(1),
       h(
         'div.setup',
-        h('div', h('div.sub', gloss('Board', '牌面'), h('span.dim', 'five cards')), this.deckEl),
+        h('div', h('div.sub', gloss('Board', '牌面'), h('span.dim', 'five cards for a river, four for a turn')), this.deckEl),
         h('div.two', number('pot', gloss('Pot', '底池')), number('stack', gloss('Behind, each', '后手'))),
         h(
           'div.two',
@@ -1005,7 +1141,7 @@ export class RiverView {
   private edited(): void {
     const preset = this.preset.spot;
     const same =
-      this.spot.board.length === 5 &&
+      this.spot.board.length === preset.board.length &&
       this.spot.board.every((c) => preset.board.includes(c)) &&
       this.spot.tree.pot === preset.tree.pot &&
       this.spot.tree.stack === preset.tree.stack;

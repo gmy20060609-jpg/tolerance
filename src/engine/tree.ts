@@ -30,10 +30,21 @@ export interface TreeConfig {
 export const DECISION = 0;
 export const FOLD = 1;
 export const SHOWDOWN = 2;
+/** A card is dealt: one child for each card that can come. */
+export const CHANCE = 3;
 
 export interface TreeNode {
   id: number;
-  type: typeof DECISION | typeof FOLD | typeof SHOWDOWN;
+  type: typeof DECISION | typeof FOLD | typeof SHOWDOWN | typeof CHANCE;
+  /**
+   * Which set of hands the node is played with: 0 before the card is dealt,
+   * 1 + i once card i of the chance node above it has come.
+   */
+  street: number;
+  /** The pot at the start of the node's street. Sizes on that street are shares of it. */
+  streetPot: number;
+  /** Chance nodes: the cards that can come, one per child. */
+  cards?: number[];
   /** Decision nodes: the player to act. Fold nodes: the player who folded. */
   player: number;
   /** Chips each player has put in on this street. */
@@ -72,7 +83,7 @@ export function buildTree(config: TreeConfig): Tree {
     parentAction: number,
     stake: number,
   ): TreeNode => {
-    const node: TreeNode = { id: nodes.length, type, player, commit, actions: [], children: [], parent, parentAction, stake };
+    const node: TreeNode = { id: nodes.length, type, street: 0, streetPot: pot, player, commit, actions: [], children: [], parent, parentAction, stake };
     nodes.push(node);
     return node;
   };
@@ -153,7 +164,8 @@ export function buildTree(config: TreeConfig): Tree {
 /** A short label for an action, with sizes shown as a share of the pot. */
 export function actionLabel(tree: Tree, node: TreeNode, index: number): string {
   const action = node.actions[index]!;
-  const { pot } = tree.config;
+  const pot = node.streetPot;
+  void tree;
   const me = node.commit[node.player]!;
   const them = node.commit[1 - node.player]!;
   switch (action.kind) {
@@ -174,4 +186,45 @@ export function actionLabel(tree: Tree, node: TreeNode, index: number): string {
       return `Raise ${Math.round(share * 100)}%`;
     }
   }
+}
+
+/**
+ * A tree of two streets. The first is built from `first`. Wherever it ends
+ * without a fold, one of `cards` is dealt and play continues on a second
+ * street built by `second` from the pot and stacks reached; if `second`
+ * returns null there is nothing left to bet and the hands are shown down.
+ */
+export function buildTwoStreetTree(
+  first: TreeConfig,
+  cards: number[],
+  second: (pot: number, stack: number) => TreeConfig | null,
+): Tree {
+  const tree = buildTree(first);
+  const nodes = tree.nodes;
+  const ends = nodes.filter((node) => node.type === SHOWDOWN);
+  for (const end of ends) {
+    const put = end.commit[0]!;
+    const pot = first.pot + 2 * put;
+    const stack = first.stack - put;
+    const config = stack > EPS ? second(pot, stack) : null;
+    end.type = CHANCE;
+    end.cards = cards;
+    end.stake = 0;
+    cards.forEach((_, i) => {
+      const offset = nodes.length;
+      const sub: TreeNode[] = config
+        ? buildTree(config).nodes
+        : [{ id: 0, type: SHOWDOWN, street: 0, streetPot: pot, player: -1, commit: [0, 0], actions: [], children: [], parent: -1, parentAction: -1, stake: pot / 2 }];
+      for (const node of sub) {
+        node.id += offset;
+        node.street = 1 + i;
+        node.children = node.children.map((child) => child + offset);
+        node.parent = node.parent < 0 ? end.id : node.parent + offset;
+        if (node.id === offset) node.parentAction = i;
+        nodes.push(node);
+      }
+      end.children.push(offset);
+    });
+  }
+  return tree;
 }

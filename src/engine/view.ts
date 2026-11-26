@@ -26,8 +26,8 @@ export interface GridView {
 }
 
 /**
- * The grid view of every decision node under the current average strategies,
- * indexed by node id (undefined for terminal nodes).
+ * The grid view of every decision node of the first street under the current
+ * average strategies, indexed by node id (undefined for every other node).
  */
 export function gridViews(solver: Solver): (GridView | undefined)[] {
   const nodes = solver.tree.nodes;
@@ -109,7 +109,7 @@ export interface ComboDetail {
 /** Per-combo strategy and values at one decision node, strongest hands first. */
 export function comboDetails(solver: Solver, nodeId: number): ComboDetail[] {
   const detail = solver.nodeDetail(nodeId);
-  const hands = solver.hands[detail.player]!;
+  const hands = solver.handsAt(nodeId)[detail.player]!;
   const actions = solver.tree.nodes[nodeId]!.actions.length;
   const own = detail.reach[detail.player]!;
   const out: ComboDetail[] = [];
@@ -126,4 +126,49 @@ export function comboDetails(solver: Solver, nodeId: number): ComboDetail[] {
     out.push({ combo: hands.label[h]!, reach: own[h]!, strategy, actionValues, value });
   }
   return out;
+}
+
+/** The grid view of one decision node, on any street. */
+export function gridViewAt(solver: Solver, nodeId: number): GridView {
+  const node = solver.tree.nodes[nodeId]!;
+  if (node.type !== DECISION) throw new Error('Not a decision node');
+  const p = node.player;
+  const hands = solver.handsAt(nodeId);
+  const mine = hands[p]!;
+  const n = mine.n;
+  const actions = node.actions.length;
+  const reach = solver.reachAt(nodeId);
+  const strategy = solver.averageStrategy(nodeId);
+  const facing = new Float64Array(n);
+  solver.reachableMass(p, reach[1 - p]!, facing, node.street);
+
+  const starting = new Float64Array(169);
+  const classReach = new Float64Array(169);
+  const classAction = new Float64Array(169 * actions);
+  const overall = new Float32Array(actions);
+  let total = 0;
+  for (let h = 0; h < n; h++) {
+    const c = COMBO_CLASS[mine.label[h]!]!;
+    starting[c]! += mine.weight[h]!;
+    const r = reach[p]![h]!;
+    if (r === 0) continue;
+    classReach[c]! += r;
+    const w = r * facing[h]!;
+    total += w;
+    for (let a = 0; a < actions; a++) {
+      const f = strategy[a * n + h]!;
+      classAction[c * actions + a]! += r * f;
+      overall[a]! += w * f;
+    }
+  }
+  const freq = new Uint8Array(169 * actions);
+  const fill = new Uint8Array(169);
+  for (let c = 0; c < 169; c++) {
+    const r = classReach[c]!;
+    if (r <= 0) continue;
+    fill[c] = Math.max(1, Math.round((255 * r) / starting[c]!));
+    for (let a = 0; a < actions; a++) freq[c * actions + a] = Math.round((255 * classAction[c * actions + a]!) / r);
+  }
+  if (total > 0) for (let a = 0; a < actions; a++) overall[a]! /= total;
+  return { freq, fill, overall };
 }

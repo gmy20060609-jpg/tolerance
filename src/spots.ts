@@ -133,6 +133,25 @@ export const moneymakerFarha: RiverSpot = {
   },
 };
 
+/**
+ * A turn: the same two ranges after a small bet and a call on the flop. The
+ * river is still to come, so all 48 of them are solved together. One bet size
+ * and one raise size on each street.
+ */
+export const turnSpot: RiverSpot = {
+  board: parseCards('Ks 8h 5d 2c'),
+  ranges: [parseRange(BB_DEFEND), parseRange(BTN_OPEN)],
+  tree: {
+    pot: 9,
+    stack: 95.5,
+    bets: [[0.75], [0.75]],
+    raises: [[1], [1]],
+    maxRaises: 1,
+    allIn: false,
+    allInThreshold: 0.67,
+  },
+};
+
 // --- Presets shown in the interface --------------------------------------------
 
 export interface Pin {
@@ -147,6 +166,8 @@ export interface Pin {
 
 export interface Preset {
   id: string;
+  /** Exploitability, as a share of the pot, the spot is solved down to by default. */
+  tolerance: number;
   title: string;
   titleZh: string;
   /** One line on where the spot comes from. */
@@ -161,6 +182,7 @@ export interface Preset {
 export const PRESETS: Preset[] = [
   {
     id: 'moneymaker-farha',
+    tolerance: 0.0001,
     title: 'Moneymaker v Farha, 2003',
     titleZh: '2003 年世界扑克大赛决赛单挑',
     line: 'World Series of Poker Main Event, 2003, heads-up for the title. Farha checks the river; Moneymaker moves all-in with king high; Farha folds top pair.',
@@ -175,6 +197,7 @@ export const PRESETS: Preset[] = [
   },
   {
     id: 'button-big-blind',
+    tolerance: 0.001,
     title: 'Button v big blind, dry river',
     titleZh: '按钮位对大盲，干燥河牌',
     line: 'A single-raised pot checked down to the river, 100 big blinds deep. Three bet sizes and two raise sizes each.',
@@ -186,6 +209,7 @@ export const PRESETS: Preset[] = [
   },
   {
     id: 'flush-river',
+    tolerance: 0.001,
     title: 'Button v big blind, flush river',
     titleZh: '按钮位对大盲，同花河牌',
     line: 'The third heart lands after a bet and a call on flop and turn. 40 big blinds in the pot, 80 behind.',
@@ -193,6 +217,18 @@ export const PRESETS: Preset[] = [
     players: ['Big blind', 'Button'],
     unit: 'bb',
     spot: wetRiver,
+    pins: [],
+  },
+  {
+    id: 'turn',
+    tolerance: 0.003,
+    title: 'Button v big blind, on the turn',
+    titleZh: '按钮位对大盲，转牌',
+    line: 'The river is still to come, so every one of the 48 is solved along with the turn: 3,039 nodes instead of 33. One bet size and one raise on each street. Pick a line that ends the turn and deal any river.',
+    lineZh: '河牌还没发，所以 48 张河牌和转牌一起解：3,039 个节点，而不是 33 个。每条街一个下注尺寸、一次加注。走完转牌的任意一条线，就可以发任意一张河牌看。',
+    players: ['Big blind', 'Button'],
+    unit: 'bb',
+    spot: turnSpot,
     pins: [],
   },
 ];

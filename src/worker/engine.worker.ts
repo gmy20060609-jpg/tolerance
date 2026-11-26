@@ -7,7 +7,8 @@ import { readPreflopTable, solvePushFold, BOARDS_PER_MATCHUP, type PreflopTable 
 import { riverSolver } from '../engine/river.ts';
 import type { Solver } from '../engine/solver.ts';
 import { DECISION } from '../engine/tree.ts';
-import { comboDetails, gridViews } from '../engine/view.ts';
+import { turnSolver } from '../engine/turn.ts';
+import { comboDetails, gridViewAt, gridViews } from '../engine/view.ts';
 import { runCheck } from '../proof/checks.ts';
 import type { Frame, Request, Response, RiverJob } from './protocol.ts';
 import tableUrl from '../engine/data/preflop-equity.bin?url';
@@ -40,13 +41,20 @@ const preflopTable = () =>
 
 let current: { id: number; solver: Solver; stopped: boolean } | undefined;
 
-/** Iterations at which a frame is taken: every one at first, then about 5% apart. */
-function nextStop(iteration: number): number {
+/**
+ * Iterations at which a frame is taken: every one at first, then a few per
+ * cent apart. Measuring a frame costs about two iterations, so the heavier
+ * two-street solves take fewer of them.
+ */
+function nextStop(iteration: number, heavy: boolean): number {
+  if (heavy) return iteration < 10 ? iteration + 1 : Math.ceil(iteration * 1.1);
   return iteration < 24 ? iteration + 1 : Math.ceil(iteration * 1.05);
 }
 
 async function solveRiver(job: RiverJob): Promise<void> {
-  const solver = riverSolver({ board: job.board, ranges: job.ranges, tree: job.tree });
+  const heavy = job.board.length === 4;
+  const spot = { board: job.board, ranges: job.ranges, tree: job.tree };
+  const solver = heavy ? turnSolver(spot) : riverSolver(spot);
   const run = { id: job.id, solver, stopped: false };
   current = run;
   const nodes = solver.tree.nodes;
@@ -56,7 +64,7 @@ async function solveRiver(job: RiverJob): Promise<void> {
   let size = 0;
   let overallSize = 0;
   for (const node of nodes) {
-    if (node.type !== DECISION) continue;
+    if (node.type !== DECISION || node.street !== 0) continue;
     offsets[node.id] = size;
     overallOffsets[node.id] = overallSize;
     size += 169 * (node.actions.length + 1);
@@ -87,7 +95,7 @@ async function solveRiver(job: RiverJob): Promise<void> {
   // lets the processor fall back to its slow cores between them.
   let slice = performance.now();
   while (solver.iteration < job.maxIterations) {
-    const target = Math.min(job.maxIterations, nextStop(solver.iteration));
+    const target = Math.min(job.maxIterations, nextStop(solver.iteration, heavy));
     const started = performance.now();
     solver.iterate(target - solver.iteration);
     ms += performance.now() - started;
@@ -199,6 +207,12 @@ self.onmessage = async (event: MessageEvent<Request>) => {
       case 'detail':
         if (current && current.id === request.id) {
           post({ type: 'detail', id: request.id, nodeId: request.nodeId, combos: comboDetails(current.solver, request.nodeId) });
+        }
+        break;
+      case 'view':
+        if (current && current.id === request.id) {
+          const view = gridViewAt(current.solver, request.nodeId);
+          post({ type: 'view', id: request.id, nodeId: request.nodeId, iteration: current.solver.iteration, ...view });
         }
         break;
       case 'pushfold': {

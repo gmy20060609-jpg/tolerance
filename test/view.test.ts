@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { comboIndex, parseCards } from '../src/engine/cards.ts';
 import { riverSolver } from '../src/engine/river.ts';
+import { turnSolver } from '../src/engine/turn.ts';
 import { DECISION } from '../src/engine/tree.ts';
 import { comboDetails, gridViews } from '../src/engine/view.ts';
 import { PRESETS, moneymakerFarha } from '../src/spots.ts';
@@ -78,9 +79,10 @@ describe('the 2003 hand', () => {
 
 describe('presets', () => {
   it.each(PRESETS)('$title can be dealt and solved', (preset) => {
-    const solver = riverSolver(preset.spot);
-    solver.iterate(50);
+    const turn = preset.spot.board.length === 4;
+    const solver = turn ? turnSolver(preset.spot) : riverSolver(preset.spot);
+    solver.iterate(turn ? 5 : 50);
     expect(solver.exploitability()).toBeGreaterThanOrEqual(0);
-    expect(new Set(preset.spot.board).size).toBe(5);
+    expect(new Set(preset.spot.board).size).toBe(turn ? 4 : 5);
   });
 });

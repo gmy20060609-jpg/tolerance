@@ -468,6 +468,24 @@ h2 .zh {
   cursor: default;
 }
 
+.deal {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.deal .deck button[disabled] {
+  cursor: default;
+  background: rgba(17, 17, 16, 0.04);
+}
+
+.board .dealt {
+  display: inline-flex;
+  padding-left: 0.3em;
+  margin-left: -0.04em;
+  border-left: 1px solid var(--ink);
+  color: var(--red);
+}
+
 .side {
   min-width: 0;
   display: grid;

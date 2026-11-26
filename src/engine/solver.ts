@@ -9,7 +9,7 @@
 // Reference: Brown and Sandholm, "Solving Imperfect-Information Games via
 // Discounted Regret Minimization", AAAI 2019.
 
-import { DECISION, FOLD, type Tree, type TreeNode } from './tree.ts';
+import { CHANCE, DECISION, FOLD, type Tree, type TreeNode } from './tree.ts';
 
 /** The hands one player can hold, each with two card ids and a strength. */
 export interface HandSet {
@@ -24,11 +24,29 @@ export interface HandSet {
   label: Int32Array;
 }
 
+/**
+ * The hands in play once a card has been dealt: the hands of the street
+ * before, less those that hold the card, ordered by their new strength.
+ */
+export interface Street {
+  hands: [HandSet, HandSet];
+  /** For each hand here, its index among the hands of the first street. */
+  from: [Int32Array, Int32Array];
+}
+
 export interface SolverOptions {
   /** DCFR exponents. The defaults are the ones recommended in the paper. */
   alpha?: number;
   beta?: number;
   gamma?: number;
+  /**
+   * For trees with a chance node: the hands on each second street, in the
+   * order of the chance node's cards. The first street's hands are then kept
+   * in the order given.
+   */
+  streets?: Street[];
+  /** Probability of each card at a chance node, given both players' hands. */
+  chanceWeight?: number;
 }
 
 /** Card ids must be below this. Real cards use 0..51; toy games may use the rest. */
@@ -50,8 +68,14 @@ function sortByStrength(hands: HandSet): HandSet {
 
 export class Solver {
   readonly tree: Tree;
-  /** Hands of both players, sorted by ascending strength. */
+  /** Hands of both players on the first street. With one street they are sorted by ascending strength. */
   readonly hands: [HandSet, HandSet];
+  /** Hands by street: index 0 is the first street. */
+  private readonly streets: [HandSet, HandSet][];
+  private readonly from: ([Int32Array, Int32Array] | null)[];
+  private readonly chanceWeight: number;
+  /** Reach vectors carried across a chance node, per street and player. */
+  private readonly dealt: [Float64Array, Float64Array][];
   /** Completed iterations. One iteration updates both players once. */
   iteration = 0;
 
@@ -65,8 +89,8 @@ export class Solver {
   private readonly strategy: Float64Array[] = [];
   private readonly childReach: Float64Array[][] = [];
   private readonly values: [Float64Array[], Float64Array[]] = [[], []];
-  /** For each hand, the index of the same two cards in the other player's hands, or -1. */
-  private readonly twin: [Int32Array, Int32Array];
+  /** Per street: for each hand, the index of the same two cards in the other player's hands, or -1. */
+  private readonly twins: [Int32Array, Int32Array][];
   private readonly cardSum = new Float64Array(CARD_SLOTS);
   /** Total weight of all deals in which the two hands share no card. */
   readonly dealWeight: number;
@@ -78,35 +102,46 @@ export class Solver {
   constructor(tree: Tree, hands: [HandSet, HandSet], options: SolverOptions = {}) {
     this.tree = tree;
     this.nodes = tree.nodes;
-    this.hands = [sortByStrength(hands[0]), sortByStrength(hands[1])];
+    const later = options.streets ?? [];
+    this.hands = later.length ? hands : [sortByStrength(hands[0]), sortByStrength(hands[1])];
+    this.streets = [this.hands, ...later.map((street) => street.hands)];
+    this.from = [null, ...later.map((street) => street.from)];
+    this.chanceWeight = options.chanceWeight ?? 1;
     this.alpha = options.alpha ?? 1.5;
     this.beta = options.beta ?? 0;
     this.gamma = options.gamma ?? 2;
 
     const [a, b] = this.hands;
     if (a.n === 0 || b.n === 0) throw new Error('Both players need at least one hand');
-    this.twin = [new Int32Array(a.n).fill(-1), new Int32Array(b.n).fill(-1)];
     const key = (h: HandSet, i: number) =>
       Math.min(h.card1[i]!, h.card2[i]!) * CARD_SLOTS + Math.max(h.card1[i]!, h.card2[i]!);
-    const seen = new Map<number, number>();
-    for (let i = 0; i < b.n; i++) seen.set(key(b, i), i);
-    for (let i = 0; i < a.n; i++) {
-      const j = seen.get(key(a, i));
-      if (j !== undefined) {
-        this.twin[0][i] = j;
-        this.twin[1][j] = i;
+    this.twins = this.streets.map(([x, y]) => {
+      const twin: [Int32Array, Int32Array] = [new Int32Array(x.n).fill(-1), new Int32Array(y.n).fill(-1)];
+      const seen = new Map<number, number>();
+      for (let i = 0; i < y.n; i++) seen.set(key(y, i), i);
+      for (let i = 0; i < x.n; i++) {
+        const j = seen.get(key(x, i));
+        if (j !== undefined) {
+          twin[0][i] = j;
+          twin[1][j] = i;
+        }
       }
-    }
+      return twin;
+    });
+    this.dealt = this.streets.map(([x, y]) => [new Float64Array(x.n), new Float64Array(y.n)]);
 
     for (const node of this.nodes) {
-      this.values[0].push(new Float64Array(a.n));
-      this.values[1].push(new Float64Array(b.n));
+      const street = this.streets[node.street];
+      if (!street) throw new Error('The tree deals a card the solver has no hands for');
+      this.values[0].push(new Float64Array(street[0].n));
+      this.values[1].push(new Float64Array(street[1].n));
       if (node.type === DECISION) {
-        const size = node.actions.length * this.hands[node.player]!.n;
+        const n = street[node.player]!.n;
+        const size = node.actions.length * n;
         this.regrets.push(new Float64Array(size));
         this.strategySum.push(new Float64Array(size));
         this.strategy.push(new Float64Array(size));
-        this.childReach.push(node.actions.map(() => new Float64Array(this.hands[node.player]!.n)));
+        this.childReach.push(node.actions.map(() => new Float64Array(n)));
       } else {
         const none = new Float64Array(0);
         this.regrets.push(none);
@@ -124,13 +159,18 @@ export class Solver {
     this.dealWeight = total;
   }
 
+  /** The hands a node is played with. */
+  handsAt(nodeId: number): [HandSet, HandSet] {
+    return this.streets[this.nodes[nodeId]!.street]!;
+  }
+
   // --- Terminal evaluation ---------------------------------------------------
 
   /** For each hand of `player`, the opponent weight it can actually face. */
-  reachableMass(player: number, oppReach: Float64Array, out: Float64Array): void {
-    const mine = this.hands[player]!;
-    const theirs = this.hands[1 - player]!;
-    const twin = this.twin[player]!;
+  reachableMass(player: number, oppReach: Float64Array, out: Float64Array, street = 0): void {
+    const mine = this.streets[street]![player]!;
+    const theirs = this.streets[street]![1 - player]!;
+    const twin = this.twins[street]![player]!;
     const sums = this.cardSum;
     sums.fill(0);
     let total = 0;
@@ -151,15 +191,15 @@ export class Solver {
   }
 
   private foldValue(node: TreeNode, player: number, oppReach: Float64Array, out: Float64Array): void {
-    this.reachableMass(player, oppReach, out);
+    this.reachableMass(player, oppReach, out, node.street);
     const sign = node.player === player ? -node.stake : node.stake;
-    const n = this.hands[player]!.n;
+    const n = this.streets[node.street]![player]!.n;
     for (let h = 0; h < n; h++) out[h]! *= sign;
   }
 
   private showdownValue(node: TreeNode, player: number, oppReach: Float64Array, out: Float64Array): void {
-    const mine = this.hands[player]!;
-    const theirs = this.hands[1 - player]!;
+    const mine = this.streets[node.street]![player]!;
+    const theirs = this.streets[node.street]![1 - player]!;
     const ms = mine.strength;
     const ts = theirs.strength;
     const m1 = mine.card1;
@@ -210,7 +250,7 @@ export class Solver {
   private currentStrategy(nodeId: number): Float64Array {
     const node = this.nodes[nodeId]!;
     const actions = node.actions.length;
-    const n = this.hands[node.player]!.n;
+    const n = this.streets[node.street]![node.player]!.n;
     const regrets = this.regrets[nodeId]!;
     const out = this.strategy[nodeId]!;
     const uniform = 1 / actions;
@@ -240,7 +280,7 @@ export class Solver {
   averageStrategy(nodeId: number, out?: Float64Array): Float64Array {
     const node = this.nodes[nodeId]!;
     const actions = node.actions.length;
-    const n = this.hands[node.player]!.n;
+    const n = this.streets[node.street]![node.player]!.n;
     const sums = this.strategySum[nodeId]!;
     const result = out ?? new Float64Array(actions * n);
     const uniform = 1 / actions;
@@ -284,6 +324,7 @@ export class Solver {
     const out = this.values[player]![nodeId]!;
     if (node.type !== DECISION) {
       if (node.type === FOLD) this.foldValue(node, player, oppReach, out);
+      else if (node.type === CHANCE) this.deal(node, player, oppReach, ownReach, out, 0);
       else this.showdownValue(node, player, oppReach, out);
       return out;
     }
@@ -292,10 +333,11 @@ export class Solver {
     const strategy = this.currentStrategy(nodeId);
     const reach = this.childReach[nodeId]!;
     const children = node.children;
+    const hands = this.streets[node.street]!;
 
     if (node.player !== player) {
-      const n = this.hands[1 - player]!.n;
-      const mine = this.hands[player]!.n;
+      const n = hands[1 - player]!.n;
+      const mine = hands[player]!.n;
       out.fill(0);
       for (let a = 0; a < actions; a++) {
         const next = reach[a]!;
@@ -307,7 +349,7 @@ export class Solver {
       return out;
     }
 
-    const n = this.hands[player]!.n;
+    const n = hands[player]!.n;
     out.fill(0);
     for (let a = 0; a < actions; a++) {
       const next = reach[a]!;
@@ -335,6 +377,41 @@ export class Solver {
     return out;
   }
 
+  /**
+   * A chance node: every card that can come is dealt in turn. Reach vectors
+   * are carried over to the hands still possible with that card, the subtree
+   * is walked, and the values come back weighted by the card's probability.
+   * `mode` 0 runs a regret update, 1 a best response, 2 the average strategies.
+   */
+  private deal(
+    node: TreeNode,
+    player: number,
+    oppReach: Float64Array,
+    ownReach: Float64Array | null,
+    out: Float64Array,
+    mode: 0 | 1 | 2,
+  ): void {
+    const weight = this.chanceWeight;
+    out.fill(0);
+    for (const childId of node.children) {
+      const street = this.nodes[childId]!.street;
+      const from = this.from[street]!;
+      const mineFrom = from[player]!;
+      const theirsFrom = from[1 - player]!;
+      const theirs = this.dealt[street]![1 - player]!;
+      for (let k = 0; k < theirs.length; k++) theirs[k] = oppReach[theirsFrom[k]!]!;
+      let value: Float64Array;
+      if (mode === 0) {
+        const mine = this.dealt[street]![player]!;
+        for (let h = 0; h < mine.length; h++) mine[h] = ownReach![mineFrom[h]!]!;
+        value = this.update(childId, player, theirs, mine);
+      } else {
+        value = this.evaluate(childId, player, theirs, mode === 1);
+      }
+      for (let h = 0; h < mineFrom.length; h++) out[mineFrom[h]!]! += weight * value[h]!;
+    }
+  }
+
   // --- Measuring the result --------------------------------------------------
 
   /**
@@ -347,6 +424,7 @@ export class Solver {
     const out = this.values[player]![nodeId]!;
     if (node.type !== DECISION) {
       if (node.type === FOLD) this.foldValue(node, player, oppReach, out);
+      else if (node.type === CHANCE) this.deal(node, player, oppReach, null, out, best ? 1 : 2);
       else this.showdownValue(node, player, oppReach, out);
       return out;
     }
@@ -354,10 +432,11 @@ export class Solver {
     const actions = node.actions.length;
     const children = node.children;
     const average = this.averageStrategy(nodeId, this.strategy[nodeId]!);
+    const hands = this.streets[node.street]!;
 
     if (node.player !== player) {
-      const n = this.hands[1 - player]!.n;
-      const mine = this.hands[player]!.n;
+      const n = hands[1 - player]!.n;
+      const mine = hands[player]!.n;
       const reach = this.childReach[nodeId]!;
       out.fill(0);
       for (let a = 0; a < actions; a++) {
@@ -370,7 +449,7 @@ export class Solver {
       return out;
     }
 
-    const n = this.hands[player]!.n;
+    const n = hands[player]!.n;
     if (best) {
       for (let a = 0; a < actions; a++) {
         const value = this.evaluate(children[a]!, player, oppReach, best);
@@ -440,11 +519,16 @@ export class Solver {
   reachAt(nodeId: number): [Float64Array, Float64Array] {
     const path: number[] = [];
     for (let id = nodeId; id > 0; id = this.nodes[id]!.parent) path.push(id);
-    const reach: [Float64Array, Float64Array] = [this.hands[0].weight.slice(), this.hands[1].weight.slice()];
+    let reach: [Float64Array, Float64Array] = [this.hands[0].weight.slice(), this.hands[1].weight.slice()];
     for (let i = path.length - 1; i >= 0; i--) {
       const child = this.nodes[path[i]!]!;
       const parent = this.nodes[child.parent]!;
-      const n = this.hands[parent.player]!.n;
+      if (parent.type === CHANCE) {
+        const from = this.from[child.street]!;
+        reach = [Float64Array.from(from[0], (h) => reach[0][h]!), Float64Array.from(from[1], (h) => reach[1][h]!)];
+        continue;
+      }
+      const n = this.streets[parent.street]![parent.player]!.n;
       const average = this.averageStrategy(parent.id);
       const base = child.parentAction * n;
       const r = reach[parent.player]!;
@@ -470,12 +554,12 @@ export class Solver {
     const node = this.nodes[nodeId]!;
     if (node.type !== DECISION) throw new Error('Not a decision node');
     const player = node.player;
-    const n = this.hands[player]!.n;
+    const n = this.streets[node.street]![player]!.n;
     const actions = node.actions.length;
     const reach = this.reachAt(nodeId);
     const oppReach = reach[1 - player]!;
     const facing = new Float64Array(n);
-    this.reachableMass(player, oppReach, facing);
+    this.reachableMass(player, oppReach, facing, node.street);
     const strategy = this.averageStrategy(nodeId);
     const actionValues = new Float64Array(actions * n);
     const half = this.tree.config.pot / 2;

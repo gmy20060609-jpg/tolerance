@@ -7,6 +7,7 @@ import type { TreeConfig, TreeNode } from '../engine/tree.ts';
 export interface RiverJob {
   type: 'river';
   id: number;
+  /** Five cards for a river, four for a turn and every river after it. */
   board: number[];
   ranges: [Float64Array, Float64Array];
   tree: TreeConfig;
@@ -19,6 +20,7 @@ export type Request =
   | RiverJob
   | { type: 'stop'; id: number }
   | { type: 'detail'; id: number; nodeId: number }
+  | { type: 'view'; id: number; nodeId: number }
   | { type: 'pushfold'; id: number; stack: number }
   | { type: 'sweep'; id: number; from: number; to: number; step: number }
   | { type: 'equity'; id: number; a: Float64Array; b: Float64Array; board: number[]; exact: [number[], number[]] | null }
@@ -30,7 +32,7 @@ export interface Frame {
   exploitability: number;
   /** Solving time so far, without the time spent measuring. */
   ms: number;
-  /** Grid views of all decision nodes, packed: see `offsets` in the tree message. */
+  /** Grid views of the first street's decision nodes, packed: see `offsets` in the tree message. */
   data: Uint8Array;
   /** Overall action frequencies of all decision nodes, packed in node order. */
   overall: Float32Array;
@@ -49,6 +51,7 @@ export type Response =
   | ({ type: 'frame'; id: number } & Frame)
   | { type: 'done'; id: number; reason: 'tolerance' | 'limit' | 'stopped' }
   | { type: 'detail'; id: number; nodeId: number; combos: ComboDetail[] }
+  | { type: 'view'; id: number; nodeId: number; iteration: number; freq: Uint8Array; fill: Uint8Array; overall: Float32Array }
   | { type: 'pushfold'; id: number; solution: PushFoldSolution; ms: number }
   | { type: 'sweep'; id: number; solution: PushFoldSolution; done: boolean }
   | { type: 'equity'; id: number; result: EquityResult }
